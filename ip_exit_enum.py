@@ -19,6 +19,7 @@ Usage:
 import argparse
 import asyncio
 import json
+import os
 import random
 import re
 import signal
@@ -27,8 +28,7 @@ import sys
 import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional
 
 # Third-party imports
 import aiohttp
@@ -62,11 +62,17 @@ class TestResult:
     """Container for individual service test results."""
     service: str                # Service identifier (e.g., "ipify", "stun-google")
     protocol: str               # Protocol used (HTTP, UDP-STUN, etc.)
-    ip: str                    # Discovered IP address
+    ips: List[str]             # All IPs observed during the test
     timestamp: float           # When the test completed
     latency_ms: float         # Response time in milliseconds
     success: bool             # Whether the test succeeded
+    attempt: int              # Which sampling attempt generated this result
     error: Optional[str] = None  # Error message if test failed
+
+    @property
+    def primary_ip(self) -> str:
+        """Return the first discovered IP for backward-compatible access."""
+        return self.ips[0] if self.ips else ""
 
 
 @dataclass
@@ -87,13 +93,14 @@ class LiveResults:
     results: List[TestResult] = field(default_factory=list)
     ips_found: Counter = field(default_factory=Counter)                    # IP -> hit count
     protocol_ips: Dict[str, Counter] = field(default_factory=lambda: defaultdict(Counter))  # protocol -> IP counts
+    family_ips: Dict[str, Counter] = field(default_factory=lambda: defaultdict(Counter))    # IP family -> counts
     service_status: Dict[str, str] = field(default_factory=dict)           # service -> status
     start_time: float = field(default_factory=time.time)
     tests_completed: int = 0
     tests_total: int = 0
     current_phase: str = "Initializing"
     confidence_level: str = "Unknown"
-    load_balancing_detected: bool = False
+    load_balancing_detected: Dict[str, bool] = field(default_factory=dict)
 
 
 # ==============================================================================
@@ -124,17 +131,18 @@ class ProgressDisplay:
         
         return f"[{bar}] {completed}/{total} ({pct*100:.1f}%)"
 
-    def format_ip_list(self, ip_counter: Counter, total_tests: int) -> List[str]:
+    def format_ip_list(self, ip_counter: Counter) -> List[str]:
         """Format discovered IPs with hit counts and percentages."""
         lines = []
+        total_hits = sum(ip_counter.values())
         for ip, count in ip_counter.most_common():
-            pct = (count / total_tests * 100) if total_tests else 0
-            
+            pct = (count / total_hits * 100) if total_hits else 0
+
             # Color code based on confidence (more hits = more confident)
-            colour = (Colors.OKGREEN if count >= 3 else 
-                     Colors.WARNING if count >= 2 else 
-                     Colors.FAIL)
-            
+            colour = (Colors.OKGREEN if count >= 3 else
+                      Colors.WARNING if count >= 2 else
+                      Colors.FAIL)
+
             lines.append(f"   {colour}✓ {ip:<39}{Colors.ENDC} ({count} hits, {pct:.1f}%)")
         return lines
 
@@ -154,19 +162,29 @@ class ProgressDisplay:
         lines.append("")
         
         # Display discovered IPs or waiting message
-        if results.ips_found:
+        active_families = {family: counter for family, counter in results.family_ips.items() if counter}
+        if active_families:
             lines.append(f"{Colors.BOLD}📊 IPs Discovered:{Colors.ENDC}")
-            lines.extend(self.format_ip_list(results.ips_found, results.tests_completed))
-            lines.append("")
+            results.load_balancing_detected = {}
             
-            # Load balancing detection
-            num_ips = len(results.ips_found)
-            if num_ips > 1:
-                lines.append(f"{Colors.WARNING}🔄 Load Balancing: DETECTED ({num_ips} different IPs){Colors.ENDC}")
-                results.load_balancing_detected = True
-            else:
-                lines.append(f"{Colors.OKGREEN}📍 Single IP: Consistent egress point{Colors.ENDC}")
-            
+            for family in ("IPv4", "IPv6"):
+                counter = active_families.get(family)
+                if not counter:
+                    continue
+
+                lines.append(f" {Colors.BOLD}{family}:{Colors.ENDC}")
+                lines.extend(self.format_ip_list(counter))
+
+                balanced = len(counter) > 1
+                results.load_balancing_detected[family] = balanced
+                summary_colour = Colors.WARNING if balanced else Colors.OKGREEN
+                summary_icon = "🔄" if balanced else "📍"
+                summary_text = (f"{summary_icon} {family}: load balancing across {len(counter)} IPs"
+                                 if balanced else
+                                 f"{summary_icon} {family}: single egress IP")
+                lines.append(f"   {summary_colour}{summary_text}{Colors.ENDC}")
+                lines.append("")
+
             lines.append(f"{Colors.OKCYAN}📈 Confidence: {results.confidence_level}{Colors.ENDC}")
             lines.append("")
         else:
@@ -194,7 +212,12 @@ class IPExitEnumerator:
         self.display = ProgressDisplay()
         self.session: Optional[aiohttp.ClientSession] = None
         self.interrupted = False
-        
+        self.sequence_rng = random.Random(42)  # Deterministic ordering for reproducibility
+        self.http_samples = 3
+        self.udp_samples = 2
+        self.sample_round_delay = 0.3
+        self.request_delay = 0.1
+
         # Set up signal handler for graceful interruption
         signal.signal(signal.SIGINT, self.signal_handler)
 
@@ -256,9 +279,9 @@ class IPExitEnumerator:
             return
 
         success_rate = sum(1 for r in self.results.results if r.success) / total
-        unique_ips = len(self.results.ips_found)
-        unique_protocols = len(self.results.protocol_ips)
-        
+        unique_protocols = sum(1 for counter in self.results.protocol_ips.values() if counter)
+        family_counters = [counter for counter in self.results.family_ips.values() if counter]
+
         score = 0
         
         # Success rate component (0–40 points)
@@ -295,11 +318,18 @@ class IPExitEnumerator:
             score += 5
 
         # Consistency component (0–20 points)
-        if unique_ips == 1 and self.results.ips_found.most_common(1)[0][1] >= 5:
-            score += 20  # Single IP with high confidence
-        elif all(v >= 2 for v in self.results.ips_found.values()):
-            score += 15  # Multiple IPs but all well-confirmed
-        # else: 0 points for inconsistent results
+        if family_counters:
+            if all(len(counter) == 1 for counter in family_counters):
+                min_hits = min(counter.most_common(1)[0][1] for counter in family_counters)
+                if min_hits >= 5:
+                    score += 20
+                elif min_hits >= 3:
+                    score += 15
+                else:
+                    score += 10
+            elif all(all(count >= 2 for count in counter.values()) for counter in family_counters):
+                score += 15  # Multiple IPs but each is seen repeatedly
+        # else: 0 points for inconsistent or sparse results
 
         # Map score to confidence label
         if score >= 85:
@@ -319,45 +349,62 @@ class IPExitEnumerator:
         if self.verbose:
             self.results.confidence_level += f" (score={score}/100)"
 
-    def extract_ip(self, text: str, method: str, field: Optional[str] = None) -> Optional[str]:
-        """
-        Extract and validate IP address from service response.
-        
-        Args:
-            text: Response text from service
-            method: Extraction method ('text', 'json')
-            field: JSON field name if method is 'json'
-            
-        Returns:
-            Valid public IP address or None
-        """
+    def extract_ips(self, text: str, method: str, field: Optional[str] = None) -> List[str]:
+        """Extract all public IP addresses from a service response."""
+
+        def tokens_from_value(value) -> List[str]:
+            if isinstance(value, str):
+                return re.split(r'[\s,]+', value.strip())
+            if isinstance(value, list):
+                tokens: List[str] = []
+                for item in value:
+                    tokens.extend(tokens_from_value(item))
+                return tokens
+            return [str(value)]
+
         try:
             if method == "json" and field:
-                # Parse JSON and extract specified field
-                ip = str(json.loads(text)[field]).split(',')[0].strip()
+                payload = json.loads(text)
+                value = payload.get(field)
+                raw_tokens = tokens_from_value(value) if value is not None else []
             else:
-                # Search for IP address in text using regex
-                for token in re.split(r'[\s,]+', text.strip()):
-                    try:
-                        ipaddress.ip_address(token)
-                        ip = token
-                        break
-                    except ValueError:
-                        continue
-                else:
-                    return None
-
-            # Validate that IP is public (not private/loopback/reserved)
-            ip_obj = ipaddress.ip_address(ip)
-            if not (ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_reserved):
-                return str(ip_obj)
-            else:
-                return None
-                
+                raw_tokens = re.split(r'[\s,]+', text.strip())
         except Exception:
-            return None
+            return []
 
-    async def test_http_service(self, service: ServiceConfig) -> Optional[TestResult]:
+        ips: List[str] = []
+        for token in raw_tokens:
+            candidate = token.strip()
+            if not candidate:
+                continue
+            try:
+                ip_obj = ipaddress.ip_address(candidate)
+            except ValueError:
+                continue
+
+            if not self.is_public_ip_obj(ip_obj):
+                continue
+
+            normalized = str(ip_obj)
+            if normalized not in ips:
+                ips.append(normalized)
+
+        return ips
+
+    @staticmethod
+    def is_public_ip(ip: str) -> bool:
+        """Return True if the string is a valid public IP address."""
+        try:
+            return IPExitEnumerator.is_public_ip_obj(ipaddress.ip_address(ip))
+        except ValueError:
+            return False
+
+    @staticmethod
+    def is_public_ip_obj(ip_obj) -> bool:
+        """Return True if the ipaddress object represents a global address."""
+        return ip_obj.is_global
+
+    async def test_http_service(self, service: ServiceConfig, attempt: int) -> Optional[TestResult]:
         """
         Test an HTTP/HTTPS service for IP discovery.
         
@@ -372,29 +419,31 @@ class IPExitEnumerator:
             timeout = aiohttp.ClientTimeout(total=service.timeout)
             async with self.session.get(service.url, timeout=timeout) as r:
                 body = await r.text()
-                ip = self.extract_ip(body, service.extract_method, service.extract_field)
-                
+                ips = self.extract_ips(body, service.extract_method, service.extract_field)
+
                 return TestResult(
-                    service.name, 
+                    service.name,
                     service.protocol,
-                    ip or "", 
-                    time.time(), 
+                    ips,
+                    time.time(),
                     (time.time() - start) * 1000,
-                    bool(ip), 
-                    None if ip else "No public IP found"
+                    bool(ips),
+                    attempt,
+                    None if ips else "No public IP found"
                 )
         except Exception as e:
             return TestResult(
-                service.name, 
-                service.protocol, 
-                "", 
+                service.name,
+                service.protocol,
+                [],
                 time.time(),
-                (time.time() - start) * 1000, 
-                False, 
+                (time.time() - start) * 1000,
+                False,
+                attempt,
                 str(e)
             )
 
-    async def test_udp_stun(self, service: ServiceConfig) -> Optional[TestResult]:
+    async def test_udp_stun(self, service: ServiceConfig, attempt: int) -> Optional[TestResult]:
         """
         Test a STUN server for IP discovery via UDP.
         
@@ -414,7 +463,7 @@ class IPExitEnumerator:
             port = int(port_str)
 
             # Generate random 12-byte transaction ID for STUN request
-            transaction_id = random.randbytes(12)
+            transaction_id = os.urandom(12)
             
             # Build STUN binding request packet
             # Format: Message Type (2) + Message Length (2) + Magic Cookie (4) + Transaction ID (12)
@@ -423,21 +472,31 @@ class IPExitEnumerator:
             # Create UDP socket with appropriate family (IPv4/IPv6)
             sock = socket.socket(service.socket_family, socket.SOCK_DGRAM)
             sock.settimeout(service.timeout)
-            
+
+            loop = asyncio.get_running_loop()
             try:
                 # Send STUN request and wait for response
-                await asyncio.get_event_loop().run_in_executor(None, sock.sendto, stun_req, (host, port))
-                data, _ = await asyncio.get_event_loop().run_in_executor(None, sock.recvfrom, 1024)
+                await loop.run_in_executor(None, sock.sendto, stun_req, (host, port))
+                data, _ = await loop.run_in_executor(None, sock.recvfrom, 1024)
             finally:
                 sock.close()
 
             # Validate STUN response format
             if len(data) < 20 or data[0:2] != b'\x01\x01':  # Success response type
-                return TestResult(service.name, service.protocol, "", time.time(),
-                                (time.time() - start) * 1000, False, "Invalid STUN response")
+                return TestResult(
+                    service.name,
+                    service.protocol,
+                    [],
+                    time.time(),
+                    (time.time() - start) * 1000,
+                    False,
+                    attempt,
+                    "Invalid STUN response"
+                )
 
             # Parse STUN attributes to find XOR-MAPPED-ADDRESS
             i = 20  # Skip STUN header
+            discovered_ips: List[str] = []
             while i + 4 <= len(data):
                 attr_type = int.from_bytes(data[i:i + 2], 'big')
                 attr_len = int.from_bytes(data[i + 2:i + 4], 'big')
@@ -453,72 +512,96 @@ class IPExitEnumerator:
                     
                     # Parse address family
                     family = int.from_bytes(data[i + 5:i + 6], 'big')
-                    
-                    if family == 0x01 and service.socket_family == socket.AF_INET:  # IPv4
-                        if attr_len >= 8:
-                            # XOR the IP with magic cookie to get actual IP
-                            ip_bytes = data[i + 8:i + 12]
-                            magic_cookie = b'\x21\x12\xa4\x42'
-                            ip_xor = bytes(a ^ b for a, b in zip(ip_bytes, magic_cookie))
-                            ip = socket.inet_ntoa(ip_xor)
-                            
-                            if self.extract_ip(ip, "text"):
-                                return TestResult(service.name, service.protocol, ip, time.time(),
-                                                (time.time() - start) * 1000, True)
-                    
-                    elif family == 0x02 and service.socket_family == socket.AF_INET6:  # IPv6
-                        if attr_len >= 20:
-                            # For IPv6, XOR with magic cookie + transaction ID
-                            ip_bytes = data[i + 8:i + 24]
-                            xor_key = b'\x21\x12\xa4\x42' + transaction_id
-                            ip_xor = bytes(a ^ b for a, b in zip(ip_bytes, xor_key))
-                            ip = socket.inet_ntop(socket.AF_INET6, ip_xor)
-                            
-                            if self.extract_ip(ip, "text"):
-                                return TestResult(service.name, service.protocol, ip, time.time(),
-                                                (time.time() - start) * 1000, True)
+
+                    if family == 0x01 and attr_len >= 8:  # IPv4
+                        ip_bytes = data[i + 8:i + 12]
+                        magic_cookie = b'\x21\x12\xa4\x42'
+                        ip_xor = bytes(a ^ b for a, b in zip(ip_bytes, magic_cookie))
+                        ip = socket.inet_ntoa(ip_xor)
+                        if self.is_public_ip(ip):
+                            discovered_ips.append(ip)
+
+                    elif family == 0x02 and attr_len >= 20:  # IPv6
+                        # For IPv6, XOR with magic cookie + transaction ID
+                        ip_bytes = data[i + 8:i + 24]
+                        xor_key = b'\x21\x12\xa4\x42' + transaction_id
+                        ip_xor = bytes(a ^ b for a, b in zip(ip_bytes, xor_key))
+                        ip = socket.inet_ntop(socket.AF_INET6, ip_xor)
+                        if self.is_public_ip(ip):
+                            discovered_ips.append(ip)
                 
                 # Move to next attribute (attributes are padded to 4-byte boundaries)
                 attr_len_padded = (attr_len + 3) & ~3  # Round up to multiple of 4
                 i += 4 + attr_len_padded
 
-            return TestResult(service.name, service.protocol, "", time.time(),
-                            (time.time() - start) * 1000, False, "No mapped address found in STUN response")
+            if discovered_ips:
+                return TestResult(
+                    service.name,
+                    service.protocol,
+                    discovered_ips,
+                    time.time(),
+                    (time.time() - start) * 1000,
+                    True,
+                    attempt
+                )
+
+            return TestResult(
+                service.name,
+                service.protocol,
+                [],
+                time.time(),
+                (time.time() - start) * 1000,
+                False,
+                attempt,
+                "No mapped address found in STUN response"
+            )
             
         except Exception as e:
-            return TestResult(service.name, service.protocol, "", time.time(),
-                            (time.time() - start) * 1000, False, str(e))
+            return TestResult(
+                service.name,
+                service.protocol,
+                [],
+                time.time(),
+                (time.time() - start) * 1000,
+                False,
+                attempt,
+                str(e)
+            )
 
-    async def run_batch(self, coros, phase):
-        """
-        Execute a batch of tests sequentially with live progress updates.
-        
-        Args:
-            coros: List of coroutines to execute
-            phase: Current phase name for display
-        """
+    async def run_batch(self, services: List[ServiceConfig], tester, phase: str, attempt: int):
+        """Execute a batch of tests sequentially with live progress updates."""
         self.results.current_phase = phase
-        for coro in coros:
+        for service in services:
             if self.interrupted:
                 break
-                
-            result = await coro
+
+            result = await tester(service, attempt)
+            self.results.tests_completed += 1
+
             if result:
                 # Store result and update statistics
                 self.results.results.append(result)
-                if result.success and result.ip:
-                    self.results.ips_found[result.ip] += 1
-                    self.results.protocol_ips[result.protocol][result.ip] += 1
-                
+                if result.success and result.ips:
+                    for ip in result.ips:
+                        self.results.ips_found[ip] += 1
+                        self.results.protocol_ips[result.protocol][ip] += 1
+
+                        try:
+                            family = "IPv6" if ipaddress.ip_address(ip).version == 6 else "IPv4"
+                        except ValueError:
+                            family = "Unknown"
+
+                        if family != "Unknown":
+                            self.results.family_ips[family][ip] += 1
+
                 self.results.service_status[result.service] = "success" if result.success else "failed"
-                self.results.tests_completed += 1
-                
-                # Update confidence and refresh display
-                self.update_confidence()
-                self.display.render_live_results(self.results)
-                
-                # Small delay to make progress visible
-                await asyncio.sleep(0.1)
+
+            # Update confidence and refresh display
+            self.update_confidence()
+            self.display.render_live_results(self.results)
+
+            # Small delay to make progress visible
+            await asyncio.sleep(self.request_delay)
 
     async def discover_ips(self):
         """
@@ -530,20 +613,38 @@ class IPExitEnumerator:
         
         try:
             # Calculate total tests for progress tracking
-            self.results.tests_total = len(self.http_services) + len(self.udp_services)
-            
-            # Run HTTP/HTTPS tests first
-            await self.run_batch(
-                [self.test_http_service(s) for s in self.http_services], 
-                "HTTP(S) Discovery"
+            self.results.tests_total = (
+                len(self.http_services) * self.http_samples +
+                len(self.udp_services) * self.udp_samples
             )
-            
-            # Then run STUN tests
-            await self.run_batch(
-                [self.test_udp_stun(s) for s in self.udp_services], 
-                "UDP-STUN Discovery"
-            )
-            
+
+            # Run HTTP/HTTPS samples
+            for attempt in range(1, self.http_samples + 1):
+                services = list(self.http_services)
+                self.sequence_rng.shuffle(services)
+                phase = f"HTTP(S) Discovery – sample {attempt}/{self.http_samples}"
+                await self.run_batch(services, self.test_http_service, phase, attempt)
+
+                if self.interrupted:
+                    break
+
+                if attempt < self.http_samples:
+                    await asyncio.sleep(self.sample_round_delay)
+
+            # Run STUN samples if not interrupted
+            if not self.interrupted:
+                for attempt in range(1, self.udp_samples + 1):
+                    services = list(self.udp_services)
+                    self.sequence_rng.shuffle(services)
+                    phase = f"UDP-STUN Discovery – sample {attempt}/{self.udp_samples}"
+                    await self.run_batch(services, self.test_udp_stun, phase, attempt)
+
+                    if self.interrupted:
+                        break
+
+                    if attempt < self.udp_samples:
+                        await asyncio.sleep(self.sample_round_delay)
+
         finally:
             if self.session:
                 await self.session.close()
@@ -563,24 +664,32 @@ class IPExitEnumerator:
         print(f"{Colors.OKCYAN}Elapsed: {elapsed:.1f}s | Total tests: {self.results.tests_completed} | Success: {successful}{Colors.ENDC}\n")
         
         # Main results
-        if not self.results.ips_found:
+        family_counters = {family: counter for family, counter in self.results.family_ips.items() if counter}
+        if not family_counters:
             print(f"{Colors.FAIL}❌ No public IPs discovered{Colors.ENDC}")
             return
 
         print(f"{Colors.BOLD}📊 Discovered IPs:{Colors.ENDC}")
-        for ip, cnt in self.results.ips_found.most_common():
-            print(f"   {Colors.OKGREEN}{ip:<39}{Colors.ENDC} ({cnt} hits)")
-        
-        print()
-        
-        # Analysis
-        if len(self.results.ips_found) > 1:
-            print(f"{Colors.WARNING}🔄 Load balancing detected across {len(self.results.ips_found)} IPs{Colors.ENDC}")
-        else:
-            print(f"{Colors.OKGREEN}📍 Single egress IP{Colors.ENDC}")
-        
+        for family in ("IPv4", "IPv6"):
+            counter = family_counters.get(family)
+            if not counter:
+                continue
+
+            print(f" {family}:")
+            total_hits = sum(counter.values())
+            for ip, cnt in counter.most_common():
+                pct = (cnt / total_hits * 100) if total_hits else 0
+                print(f"   {Colors.OKGREEN}{ip:<39}{Colors.ENDC} ({cnt} hits, {pct:.1f}%)")
+
+            if len(counter) > 1:
+                print(f"   {Colors.WARNING}🔄 {family} load balancing across {len(counter)} IPs{Colors.ENDC}")
+            else:
+                print(f"   {Colors.OKGREEN}📍 {family} single egress IP{Colors.ENDC}")
+
+            print()
+
         print(f"{Colors.OKCYAN}Confidence: {self.results.confidence_level}{Colors.ENDC}")
-        
+
         # Verbose details if requested
         if self.verbose:
             self.print_verbose()
@@ -590,7 +699,11 @@ class IPExitEnumerator:
         print("\n📋 Detailed results:")
         for r in self.results.results:
             status = "✓" if r.success else "✗"
-            print(f"   {status} {r.service:<25} | {r.protocol:<10} | {r.ip:<39} | {r.latency_ms:>7.1f}ms")
+            ips_display = ', '.join(r.ips) if r.ips else "-"
+            print(
+                f"   {status} {r.service:<25} | {r.protocol:<10} | #{r.attempt:<2} | "
+                f"{ips_display:<45} | {r.latency_ms:>7.1f}ms"
+            )
 
 
 # ==============================================================================
