@@ -226,29 +226,154 @@ func (e *Engine) processResult(res TestResult) {
 }
 
 func (e *Engine) getUpdate() ui.ResultUpdate {
-	// Calculate confidence (simple version)
-	confidence := "Low"
+	confidence, consensus := e.CalculateConfidence()
+
+	// Check for load balancing (more than 1 IP per family)
+	loadBalancing := make(map[string]bool)
+	for fam, counts := range e.familyIPs {
+		if len(counts) > 1 {
+			loadBalancing[fam] = true
+		}
+	}
+
+	return ui.ResultUpdate{
+		StartTime:          e.startTime,
+		CurrentPhase:       e.currentPhase,
+		CompletedTests:     e.testsCompleted,
+		TotalTests:         e.testsTotal,
+		IPs:                e.ipsFound,
+		IPFamilies:         e.familyIPs,
+		ConfidenceLevel:    confidence,
+		Consensus:          consensus,
+		LoadBalancingFound: loadBalancing,
+	}
+}
+
+// CalculateConfidence determines how trustworthy the results are
+// Returns confidence label and consensus details
+func (e *Engine) CalculateConfidence() (string, string) {
+	if e.testsCompleted == 0 {
+		return "Unknown", "Waiting..."
+	}
+
+	total := float64(e.testsCompleted)
 	successCount := 0
 	for _, r := range e.results {
 		if r.Success {
 			successCount++
 		}
 	}
+	successRate := float64(successCount) / total
 
-	if successCount > 5 {
-		confidence = "Medium"
-	}
-	if successCount > 10 {
-		confidence = "High"
+	// 1. Success Rate Component (0-40 points)
+	score := 0.0
+	if successRate >= 0.95 {
+		score += 40
+	} else if successRate >= 0.85 {
+		score += 32
+	} else if successRate >= 0.70 {
+		score += 24
+	} else if successRate >= 0.50 {
+		score += 16
+	} else {
+		score += 8
 	}
 
-	return ui.ResultUpdate{
-		StartTime:       e.startTime,
-		CurrentPhase:    e.currentPhase,
-		CompletedTests:  e.testsCompleted,
-		TotalTests:      e.testsTotal,
-		IPs:             e.ipsFound,
-		IPFamilies:      e.familyIPs,
-		ConfidenceLevel: confidence,
+	// 2. Sample Size Component (0-25 points)
+	if successCount >= 15 {
+		score += 25
+	} else if successCount >= 10 {
+		score += 20
+	} else if successCount >= 7 {
+		score += 15
+	} else if successCount >= 5 {
+		score += 10
+	} else {
+		score += 5
 	}
+
+	// 3. Diversity Component (0-15 points)
+	protocols := make(map[string]bool)
+	for _, r := range e.results {
+		if r.Success {
+			protocols[r.Protocol] = true
+		}
+	}
+	if len(protocols) >= 3 {
+		score += 15
+	} else if len(protocols) >= 2 {
+		score += 10
+	} else {
+		score += 5
+	}
+
+	// 4. Consistency/Consensus Component (0-20 points)
+	// Do we have a clear winner for each family?
+	isConsistent := true
+	consensusMsg := "Strong Consensus"
+
+	for fam, counts := range e.familyIPs {
+		if len(counts) == 0 {
+			continue
+		}
+
+		totalFamHits := 0
+		maxHits := 0
+		for _, c := range counts {
+			totalFamHits += c
+			if c > maxHits {
+				maxHits = c
+			}
+		}
+
+		// Calculate dominance
+		dominance := float64(maxHits) / float64(totalFamHits)
+
+		if dominance < 0.8 && len(counts) > 1 {
+			// Less than 80% agree on one IP
+			isConsistent = false
+			if dominance < 0.6 {
+				consensusMsg = fmt.Sprintf("Split-Brain (%s)", fam)
+			} else {
+				consensusMsg = fmt.Sprintf("Weak Consensus (%s)", fam)
+			}
+		}
+
+		// Bonus for repeated confirmation of single IP
+		if len(counts) == 1 && maxHits >= 5 {
+			// Perfect consistency
+		} else if len(counts) > 1 {
+			// Penalty handled by 'isConsistent' flag
+		}
+	}
+
+	if isConsistent {
+		score += 20
+	} else {
+		// Penalty for inconsistency
+		score -= 10
+	}
+
+	// Map score to label
+	label := "Low"
+	if score >= 85 {
+		label = "Very High"
+	} else if score >= 70 {
+		label = "High"
+	} else if score >= 55 {
+		label = "Medium-High"
+	} else if score >= 40 {
+		label = "Medium"
+	} else if score >= 25 {
+		label = "Low-Medium"
+	}
+
+	// Append score for debugging/transparency if needed, or keeping it clean
+	// label = fmt.Sprintf("%s (%.0f)", label, score)
+
+	if !isConsistent {
+		label += " / " + consensusMsg // e.g. "Medium / Split-Brain (IPv4)"
+	}
+
+	return label, consensusMsg
 }
