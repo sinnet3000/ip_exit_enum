@@ -208,3 +208,9 @@ __marimo__/
 
 # Go binary
 ip_exit_enum
+
+# Go standard ignores
+*.exe
+*.test
+*.out
+vendor/
