@@ -37,6 +37,7 @@ type ResultUpdate struct {
 	IPs                map[string]int            // IP -> count
 	IPFamilies         map[string]map[string]int // Family -> IP -> count
 	ConfidenceLevel    string
+	Consensus          string
 	LoadBalancingFound map[string]bool
 }
 
@@ -156,7 +157,11 @@ func (d *Display) RenderLiveResults(state ResultUpdate) {
 	}
 
 	if hasIPs {
-		lines = append(lines, fmt.Sprintf("%s📈 Confidence: %s%s", ColorOKCyan, state.ConfidenceLevel, ColorEnd))
+		confLine := fmt.Sprintf("%s📈 Confidence: %s%s", ColorOKCyan, state.ConfidenceLevel, ColorEnd)
+		if state.Consensus != "" && state.Consensus != "Strong Consensus" {
+			confLine += fmt.Sprintf(" (%s)", state.Consensus)
+		}
+		lines = append(lines, confLine)
 		lines = append(lines, "")
 	} else {
 		lines = append(lines, fmt.Sprintf("%s⏳ Discovering IPs...%s", ColorWarning, ColorEnd))
