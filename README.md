@@ -34,19 +34,28 @@ The original Python implementation is preserved for historical purposes in the `
     ```
 
 2.  **Build the binary:**
+    Using the provided `Makefile`, you can build binaries for various platforms:
     ```sh
-    go build .
+    make build
+    # or to clean previous builds and then build all:
+    make all
     ```
+    This will create a `bin/` directory containing platform-specific executables.
 
 3.  **Run the enumerator:**
+    Navigate into the `bin` directory and run the appropriate executable for your platform. For example, on macOS (Apple Silicon):
     ```sh
-    ./ip_exit_enum
+    ./bin/ip_exit_enum_darwin_arm64
+    ```
+    Or on Linux:
+    ```sh
+    ./bin/ip_exit_enum_linux_amd64
     ```
 
 4.  **Run in Verbose Mode:**
-    To see detailed information about each service check, use the `-v` flag.
+    To see detailed information about each service check, use the `-v` flag with the appropriate binary. For example:
     ```sh
-    ./ip_exit_enum -v
+    ./bin/ip_exit_enum_darwin_arm64 -v
     ```
 
 ## Legacy Version
