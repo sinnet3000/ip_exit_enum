@@ -58,3 +58,11 @@ cd legacy
 pip install -r requirements.txt
 python ip_exit_enum.py
 ```
+
+## License
+
+This project is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0).
+
+Copyright (C) 2025 Luis Colunga (@sinnet3000). All rights reserved.
+
+See the [LICENSE](LICENSE) file for full details.
