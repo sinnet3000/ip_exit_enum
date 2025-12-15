@@ -1,66 +1,112 @@
-# IP Exit Enumerator
+# ip_exit_enum
 
-## Overview
+`ip_exit_enum` is a command-line network diagnostics tool that enumerates public IPv4 and IPv6 **egress (exit) IP addresses** by correlating results from multiple independent HTTP and STUN services.
 
-IP Exit Enumerator is a command-line tool designed to discover and report the public IP addresses (both IPv4 and IPv6) that your machine uses to connect to the internet. It simultaneously queries a collection of external HTTP and STUN services to quickly identify your potential exit IPs.
+It is designed to detect **non-deterministic outbound behavior**—such as load-balanced NAT, carrier-grade NAT, or ISP routing policies—that single-request “what’s my IP” tools cannot reliably identify.
 
-This provides a more reliable result than relying on a single service, which might be unavailable or provide inconsistent information.
+---
 
-The project was initially conceived while on a hotel network experiencing flaky load balancing rules. This tool was developed to better probe and understand how such networks handled external IP egress.
+## Why This Tool Exists
 
-## Project History
+Most public IP discovery tools perform a single request and report the IP address used for that connection. In networks with load balancing, shared NAT, or policy-based routing, this approach can be misleading: different outbound connections may use different public IP addresses.
 
-This project originally started as a small utility written in Python. As the scope grew to include more concurrent service checks and a desire for a single, dependency-free binary, the decision was made to rewrite it in Go. The modern Go version offers superior performance for this network-bound task.
+`ip_exit_enum` addresses this gap by querying multiple independent services concurrently and analyzing the results to identify all observed exit IPs, along with a confidence score indicating whether multiple outbound addresses are in use.
 
-The original Python implementation is preserved for historical purposes in the `legacy/` directory.
+This makes it useful for diagnosing:
+- Load-balanced or carrier-grade NAT environments
+- Inconsistent firewall or IP allowlist behavior
+- Shared or opaque networks (hotels, ISPs, managed networks, cloud egress)
+
+---
+
+## How It Works
+
+`ip_exit_enum` performs concurrent queries against a collection of:
+- HTTP-based IP echo services
+- STUN (Session Traversal Utilities for NAT) servers
+
+By combining results from multiple protocols and independent endpoints, the tool reduces reliance on any single network path. The aggregated responses are analyzed to:
+
+- Identify distinct IPv4 and IPv6 exit addresses
+- Detect non-deterministic egress behavior
+- Assign a confidence score indicating the likelihood of multiple outbound IPs
+
+The tool has been validated on dual-stack (IPv4/IPv6) networks and environments with unstable or shared connectivity.
+
+---
 
 ## Features
 
-- **Concurrent Queries**: Checks multiple services at once for fast results.
-- **Multiple Protocols**: Uses both HTTP-based IP echo services and STUN (Session Traversal Utilities for NAT) servers.
-- **IPv4 & IPv6 Support**: Discovers public addresses for both major IP versions.
-- **Verbose Mode**: An optional `-v` flag provides detailed logs of which services were contacted and their responses.
+- **Concurrent Queries**: Multiple services queried in parallel for fast, representative results
+- **Multiple Protocols**: Uses both HTTP and STUN to diversify observation paths
+- **IPv4 & IPv6 Support**: Enumerates exit addresses for both IP versions
+- **Confidence Scoring**: Indicates how likely multiple exit IPs are in use
+- **Verbose Mode**: `-v` flag provides detailed per-service results and diagnostics
+- **Single Binary**: Built as a standalone Go binary with no runtime dependencies
 
-## Prerequisites
+---
 
-- **Go**: Version 1.22.5 or newer.
+## Live UI Snapshot
 
-## Installation & Usage
+Example TUI output (illustrative) highlighting two discovered IPv4 exits and one IPv6 exit:
 
-1.  **Clone the repository:**
-    ```sh
-    git clone <repository-url>
-    cd ip_exit_enum
-    ```
+```text
+🔍 IP Exit Discovery – Live Results
+Phase: HTTP(S) Discovery – sample 2/3 | Elapsed: 4.8s
 
-2.  **Build the binary:**
-    Using the provided `Makefile`, you can build binaries for various platforms:
-    ```sh
-    make build
-    # or to clean previous builds and then build all:
-    make all
-    ```
-    This will create a `bin/` directory containing platform-specific executables.
+Overall Progress: [██████████████            ] 18/30 (60.0%)
 
-3.  **Run the enumerator:**
-    Navigate into the `bin` directory and run the appropriate executable for your platform. For example, on macOS (Apple Silicon):
-    ```sh
-    ./bin/ip_exit_enum_darwin_arm64
-    ```
-    Or on Linux:
-    ```sh
-    ./bin/ip_exit_enum_linux_amd64
-    ```
+📊 IPs Discovered:
+ IPv4:
+   ✓ 198.51.100.10                           (3 hits, 60.0%)
+   ✓ 203.0.113.7                             (2 hits, 40.0%)
+   🔄 IPv4: load balancing across 2 IPs
 
-4.  **Run in Verbose Mode:**
-    To see detailed information about each service check, use the `-v` flag with the appropriate binary. For example:
-    ```sh
-    ./bin/ip_exit_enum_darwin_arm64 -v
-    ```
+ IPv6:
+   ✓ 2001:db8::1                             (4 hits, 100.0%)
+   📍 IPv6: single egress IP
 
-## Legacy Version
+📈 Confidence: High (Strong Consensus)
+```
 
-The original Python script can be found in the `legacy/` directory. To run it, you will need Python 3 and the packages listed in `legacy/requirements.txt`.
+---
+
+## Installation
+
+### Requirements
+- **Go** 1.22.5 or newer
+
+### Build from Source
+
+```sh
+git clone https://github.com/sinnet3000/ip_exit_enum.git
+cd ip_exit_enum
+make build
+```
+
+The compiled binary will be available in the `bin/` directory.
+
+---
+
+## Usage
+
+```sh
+./bin/ip_exit_enum
+```
+
+For detailed output:
+
+```sh
+./bin/ip_exit_enum -v
+```
+
+---
+
+## Legacy Python Version
+
+The original Python implementation is preserved in the `legacy/` directory for reference and historical context. It is not feature-equivalent to the Go version.
+
+To run it:
 
 ```sh
 cd legacy
@@ -68,10 +114,13 @@ pip install -r requirements.txt
 python ip_exit_enum.py
 ```
 
+---
+
 ## License
 
-This project is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0).
+This project is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)**.
 
-Copyright (C) 2025 Luis Colunga (@sinnet3000). All rights reserved.
+Copyright © 2025  
+**Luis Colunga (@sinnet3000)**
 
 See the [LICENSE](LICENSE) file for full details.
