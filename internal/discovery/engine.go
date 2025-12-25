@@ -212,7 +212,8 @@ func (e *Engine) processResult(res TestResult) {
 
 			// Family accounting
 			family := "IPv4"
-			if net.ParseIP(ip).To4() == nil {
+			parsedIP := net.ParseIP(ip)
+			if parsedIP != nil && parsedIP.To4() == nil {
 				family = "IPv6"
 			}
 			e.familyIPs[family][ip]++
