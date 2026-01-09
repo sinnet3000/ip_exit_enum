@@ -181,9 +181,6 @@ func (e *Engine) runBatch(ctx context.Context, services []ServiceConfig, tester 
 			defer wg.Done()
 			defer func() { <-semaphore }()
 
-			// Small jitter to prevent stampedes
-			time.Sleep(time.Duration(rand.Intn(100)) * time.Millisecond)
-
 			res := tester(ctx, s, attempt)
 			e.processResult(res)
 		}(svc)
