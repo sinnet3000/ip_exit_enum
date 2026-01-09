@@ -91,6 +91,8 @@ func (e *Engine) Run(ctx context.Context, verbose bool) {
 
 	e.testsTotal = (len(e.httpServices) * httpSamples) + (len(e.udpServices) * udpSamples)
 
+	httpTester := NewHTTPTester()
+
 	// Run HTTP Tests
 	for attempt := 1; attempt <= httpSamples; attempt++ {
 		e.currentPhase = fmt.Sprintf("HTTP(S) Discovery – sample %d/%d", attempt, httpSamples)
@@ -100,7 +102,7 @@ func (e *Engine) Run(ctx context.Context, verbose bool) {
 		copy(services, e.httpServices)
 		rand.Shuffle(len(services), func(i, j int) { services[i], services[j] = services[j], services[i] })
 
-		e.runBatch(ctx, services, TestHTTPService, attempt)
+		e.runBatch(ctx, services, httpTester.Test, attempt)
 
 		// Break if context cancelled
 		if ctx.Err() != nil {

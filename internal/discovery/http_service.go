@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -101,7 +102,33 @@ func extractIPs(content string) []string {
 	return valid
 }
 
-func TestHTTPService(ctx context.Context, service ServiceConfig, attempt int) TestResult {
+// HTTPTester handles HTTP testing with cached clients
+type HTTPTester struct {
+	clients map[string]*http.Client
+	mu      sync.Mutex
+}
+
+func NewHTTPTester() *HTTPTester {
+	return &HTTPTester{
+		clients: make(map[string]*http.Client),
+	}
+}
+
+func (t *HTTPTester) getClient(family string) *http.Client {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if client, ok := t.clients[family]; ok {
+		return client
+	}
+
+	factory := &defaultHTTPClientFactory{}
+	client := factory.CreateClient(family)
+	t.clients[family] = client
+	return client
+}
+
+func (t *HTTPTester) Test(ctx context.Context, service ServiceConfig, attempt int) TestResult {
 	start := time.Now()
 
 	// Determine family hint from service name or config
@@ -114,8 +141,7 @@ func TestHTTPService(ctx context.Context, service ServiceConfig, attempt int) Te
 		family = "IPv6"
 	}
 
-	clientFactory := &defaultHTTPClientFactory{}
-	client := clientFactory.CreateClient(family)
+	client := t.getClient(family)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", service.URL, nil)
 	if err != nil {
