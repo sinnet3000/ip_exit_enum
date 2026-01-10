@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/pion/stun/v2"
@@ -11,6 +12,12 @@ import (
 // TestSTUNService performs a STUN binding request to discover the public IP
 func TestSTUNService(ctx context.Context, service ServiceConfig, attempt int) TestResult {
 	start := time.Now()
+
+	if service.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, service.Timeout)
+		defer cancel()
+	}
 
 	// Determine network based on protocol/name
 	network := "udp"
@@ -22,8 +29,12 @@ func TestSTUNService(ctx context.Context, service ServiceConfig, attempt int) Te
 		network = "udp4"
 	}
 
-	// Create STUN client (this connects to the server)
-	c, err := stun.Dial(network, service.URL)
+	dialer := net.Dialer{}
+	if service.Timeout > 0 {
+		dialer.Timeout = service.Timeout
+	}
+
+	conn, err := dialer.DialContext(ctx, network, service.URL)
 	if err != nil {
 		return TestResult{
 			Service:   service.Name,
@@ -32,6 +43,35 @@ func TestSTUNService(ctx context.Context, service ServiceConfig, attempt int) Te
 			Attempt:   attempt,
 			Success:   false,
 			Error:     fmt.Errorf("stun dial failed: %w", err),
+			Latency:   time.Since(start),
+		}
+	}
+	if service.Timeout > 0 {
+		if err := conn.SetDeadline(time.Now().Add(service.Timeout)); err != nil {
+			conn.Close()
+			return TestResult{
+				Service:   service.Name,
+				Protocol:  service.Protocol,
+				Timestamp: start,
+				Attempt:   attempt,
+				Success:   false,
+				Error:     fmt.Errorf("stun set deadline failed: %w", err),
+				Latency:   time.Since(start),
+			}
+		}
+	}
+
+	// Create STUN client (this connects to the server)
+	c, err := stun.NewClient(conn)
+	if err != nil {
+		conn.Close()
+		return TestResult{
+			Service:   service.Name,
+			Protocol:  service.Protocol,
+			Timestamp: start,
+			Attempt:   attempt,
+			Success:   false,
+			Error:     fmt.Errorf("stun client init failed: %w", err),
 			Latency:   time.Since(start),
 		}
 	}
