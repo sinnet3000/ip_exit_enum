@@ -37,19 +37,26 @@ type TestResult struct {
 // HTTPClientFactory creates clients with specific transport configurations
 // This is crucial for forcing IPv4 vs IPv6 connections
 type HTTPClientFactory interface {
-	CreateClient(family string) *http.Client
+	CreateClient(family string, timeout time.Duration) *http.Client
 }
 
 type defaultHTTPClientFactory struct{}
 
-func (f *defaultHTTPClientFactory) CreateClient(family string) *http.Client {
+func (f *defaultHTTPClientFactory) CreateClient(family string, timeout time.Duration) *http.Client {
+	dialTimeout := 5 * time.Second
+	clientTimeout := 10 * time.Second
+	if timeout > 0 {
+		dialTimeout = timeout
+		clientTimeout = timeout
+	}
+
 	transport := &http.Transport{
 		DisableKeepAlives: true,
 	}
 
 	// Restrict dialer to specific address family if needed
 	dialer := &net.Dialer{
-		Timeout:   5 * time.Second,
+		Timeout:   dialTimeout,
 		KeepAlive: 30 * time.Second,
 	}
 
@@ -65,7 +72,7 @@ func (f *defaultHTTPClientFactory) CreateClient(family string) *http.Client {
 
 	return &http.Client{
 		Transport: transport,
-		Timeout:   10 * time.Second,
+		Timeout:   clientTimeout,
 	}
 }
 
@@ -104,6 +111,13 @@ func extractIPs(content string) []string {
 func TestHTTPService(ctx context.Context, service ServiceConfig, attempt int) TestResult {
 	start := time.Now()
 
+	reqCtx := ctx
+	if service.Timeout > 0 {
+		var cancel context.CancelFunc
+		reqCtx, cancel = context.WithTimeout(ctx, service.Timeout)
+		defer cancel()
+	}
+
 	// Determine family hint from service name or config
 	// Ideally ServiceConfig would have a 'Family' field, but for now we infer or use default
 	family := "dual"
@@ -115,9 +129,9 @@ func TestHTTPService(ctx context.Context, service ServiceConfig, attempt int) Te
 	}
 
 	clientFactory := &defaultHTTPClientFactory{}
-	client := clientFactory.CreateClient(family)
+	client := clientFactory.CreateClient(family, service.Timeout)
 
-	req, err := http.NewRequestWithContext(ctx, "GET", service.URL, nil)
+	req, err := http.NewRequestWithContext(reqCtx, "GET", service.URL, nil)
 	if err != nil {
 		return TestResult{
 			Service:   service.Name,
