@@ -37,3 +37,18 @@ func TestHTTPServiceRespectsTimeout(t *testing.T) {
 		t.Fatalf("expected timeout within 300ms, took %s", elapsed)
 	}
 }
+
+func TestExtractIPsFiltersAndParses(t *testing.T) {
+	content := "public v4 203.0.113.7 private 10.0.0.1 v6 2001:db8::1 loopback ::1"
+	ips := extractIPs(content)
+
+	if len(ips) != 2 {
+		t.Fatalf("expected 2 IPs, got %d: %v", len(ips), ips)
+	}
+	if ips[0] != "203.0.113.7" && ips[1] != "203.0.113.7" {
+		t.Fatalf("expected IPv4 203.0.113.7 in %v", ips)
+	}
+	if ips[0] != "2001:db8::1" && ips[1] != "2001:db8::1" {
+		t.Fatalf("expected IPv6 2001:db8::1 in %v", ips)
+	}
+}

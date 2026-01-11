@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"net/http"
 	"regexp"
 	"strings"
@@ -76,34 +77,37 @@ func (f *defaultHTTPClientFactory) CreateClient(family string, timeout time.Dura
 	}
 }
 
-// Global regex for IP extraction
-var ipRegex = regexp.MustCompile(`\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b|([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)`)
+// Regexes for candidate extraction; validation uses netip.ParseAddr.
+var ipv4Regex = regexp.MustCompile(`\b\d{1,3}(?:\.\d{1,3}){3}\b`)
+var ipv6Regex = regexp.MustCompile(`\b[0-9a-fA-F:]*:[0-9a-fA-F:]*\b`)
 
 // extractIPs finds all public IPs in a string
 func extractIPs(content string) []string {
-	// Simple wrapper for now, can be robustified later
-	// Note: The python version had specific logic to filter private IPs
-	// We should replicate basic filtering here.
-
-	candidates := ipRegex.FindAllString(content, -1)
 	var valid []string
 	seen := make(map[string]bool)
-
-	for _, c := range candidates {
-		ip := net.ParseIP(c)
-		if ip == nil || ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() {
-			continue
+	addCandidate := func(candidate string) {
+		if candidate == "" {
+			return
 		}
-		// Additional check for link-local
-		if ip.IsLinkLocalMulticast() || ip.IsLinkLocalUnicast() {
-			continue
+		addr, err := netip.ParseAddr(candidate)
+		if err != nil || addr.IsLoopback() || addr.IsPrivate() || addr.IsUnspecified() {
+			return
 		}
-
-		cleanIP := ip.String()
+		if addr.IsLinkLocalMulticast() || addr.IsLinkLocalUnicast() {
+			return
+		}
+		cleanIP := addr.String()
 		if !seen[cleanIP] {
 			valid = append(valid, cleanIP)
 			seen[cleanIP] = true
 		}
+	}
+
+	for _, c := range ipv4Regex.FindAllString(content, -1) {
+		addCandidate(c)
+	}
+	for _, c := range ipv6Regex.FindAllString(content, -1) {
+		addCandidate(c)
 	}
 	return valid
 }
