@@ -4,15 +4,13 @@
 
 It is designed to detect **non-deterministic outbound behavior**—such as load-balanced NAT, carrier-grade NAT, or ISP routing policies—that single-request “what’s my IP” tools cannot reliably identify.
 
----
+## Why
 
-## Why This Tool Exists
+Most public IP discovery tools do a single request and report the IP address used for that connection. In networks with load balancing, shared NAT, or policy-based routing, that can be misleading; different outbound connections can use different public IP addresses.
 
-Most public IP discovery tools perform a single request and report the IP address used for that connection. In networks with load balancing, shared NAT, or policy-based routing, this approach can be misleading: different outbound connections may use different public IP addresses.
+`ip_exit_enum` queries multiple independent services concurrently and aggregates the results into a set of observed exit IPs, along with a confidence score indicating whether multiple outbound addresses are in use.
 
-`ip_exit_enum` addresses this gap by querying multiple independent services concurrently and analyzing the results to identify all observed exit IPs, along with a confidence score indicating whether multiple outbound addresses are in use.
-
-This makes it useful for diagnosing:
+It is useful for diagnosing:
 - Load-balanced or carrier-grade NAT environments
 - Inconsistent firewall or IP allowlist behavior
 - Shared or opaque networks (hotels, ISPs, managed networks, cloud egress)
