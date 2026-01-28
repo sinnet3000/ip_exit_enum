@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/netip"
 	"time"
 
 	"github.com/pion/stun/v2"
@@ -137,15 +138,15 @@ func TestSTUNService(ctx context.Context, service ServiceConfig, attempt int) Te
 		}
 	}
 
-	// Filter private IPs just in case
-	if xorAddr.IP.IsPrivate() || xorAddr.IP.IsLoopback() {
+	addr, ok := netip.AddrFromSlice(xorAddr.IP)
+	if !ok || !addr.IsGlobalUnicast() {
 		return TestResult{
 			Service:   service.Name,
 			Protocol:  service.Protocol,
 			Timestamp: start,
 			Attempt:   attempt,
 			Success:   false,
-			Error:     fmt.Errorf("stun returned private IP: %s", xorAddr.IP.String()),
+			Error:     fmt.Errorf("stun returned non-public IP: %s", xorAddr.IP.String()),
 			Latency:   latency,
 		}
 	}
