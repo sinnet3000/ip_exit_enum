@@ -14,14 +14,12 @@ import (
 	"ip_exit_enum/internal/ui"
 )
 
-// Engine orchestrates the discovery process
 type Engine struct {
 	httpServices []ServiceConfig
 	udpServices  []ServiceConfig
 	results      []TestResult
 	ui           *ui.Display
 
-	// State for UI
 	ipsFound       map[string]int
 	protocolIPs    map[string]map[string]int
 	familyIPs      map[string]map[string]int
@@ -52,7 +50,6 @@ func NewEngine(httpServices, udpServices []ServiceConfig) *Engine {
 	return e
 }
 
-// ensureMaps ensures nested maps are initialized (helper)
 func (e *Engine) ensureMaps() {
 	if e.familyIPs == nil {
 		e.familyIPs = make(map[string]map[string]int)
@@ -72,11 +69,9 @@ func (e *Engine) Run(ctx context.Context, verbose bool) {
 	e.ensureMaps()
 	e.startTime = time.Now()
 
-	// Create cancelable context for graceful shutdown
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// Handle signals
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
@@ -85,24 +80,20 @@ func (e *Engine) Run(ctx context.Context, verbose bool) {
 		cancel()
 	}()
 
-	// Samples config
 	httpSamples := 3
 	udpSamples := 2
 
 	e.testsTotal = (len(e.httpServices) * httpSamples) + (len(e.udpServices) * udpSamples)
 
-	// Run HTTP Tests
 	for attempt := 1; attempt <= httpSamples; attempt++ {
 		e.currentPhase = fmt.Sprintf("HTTP(S) Discovery – sample %d/%d", attempt, httpSamples)
 
-		// Shuffle services
 		services := make([]ServiceConfig, len(e.httpServices))
 		copy(services, e.httpServices)
 		rand.Shuffle(len(services), func(i, j int) { services[i], services[j] = services[j], services[i] })
 
 		e.runBatch(ctx, services, TestHTTPService, attempt)
 
-		// Break if context cancelled
 		if ctx.Err() != nil {
 			break
 		}
@@ -112,7 +103,6 @@ func (e *Engine) Run(ctx context.Context, verbose bool) {
 		}
 	}
 
-	// Run STUN Tests
 	for attempt := 1; attempt <= udpSamples; attempt++ {
 		e.currentPhase = fmt.Sprintf("UDP-STUN Discovery – sample %d/%d", attempt, udpSamples)
 
@@ -131,7 +121,6 @@ func (e *Engine) Run(ctx context.Context, verbose bool) {
 		}
 	}
 
-	// Final Report
 	e.ui.RenderLiveResults(e.getUpdateSnapshot()) // Final update
 
 	if verbose {
@@ -200,13 +189,11 @@ func (e *Engine) processResult(res TestResult) {
 		for _, ip := range res.IPs {
 			e.ipsFound[ip]++
 
-			// Protocol accounting
 			if e.protocolIPs[res.Protocol] == nil {
 				e.protocolIPs[res.Protocol] = make(map[string]int)
 			}
 			e.protocolIPs[res.Protocol][ip]++
 
-			// Family accounting
 			family := "IPv4"
 			parsedIP := net.ParseIP(ip)
 			if parsedIP != nil && parsedIP.To4() == nil {
@@ -221,7 +208,6 @@ func (e *Engine) processResult(res TestResult) {
 	update := e.getUpdateSnapshotLocked()
 	e.mu.Unlock()
 
-	// Trigger UI update
 	e.ui.RenderLiveResults(update)
 }
 
@@ -248,7 +234,6 @@ func (e *Engine) getUpdateSnapshotLocked() ui.ResultUpdate {
 		familyIPs[fam] = copyCounts
 	}
 
-	// Check for load balancing (more than 1 IP per family)
 	loadBalancing := make(map[string]bool)
 	for fam, counts := range familyIPs {
 		if len(counts) > 1 {
@@ -269,8 +254,6 @@ func (e *Engine) getUpdateSnapshotLocked() ui.ResultUpdate {
 	}
 }
 
-// CalculateConfidence determines how trustworthy the results are
-// Returns confidence label and consensus details
 func (e *Engine) CalculateConfidence() (string, string) {
 	if e.testsCompleted == 0 {
 		return "Unknown", "Waiting..."

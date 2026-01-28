@@ -10,7 +10,6 @@ import (
 	"github.com/pion/stun/v2"
 )
 
-// TestSTUNService performs a STUN binding request to discover the public IP
 func TestSTUNService(ctx context.Context, service ServiceConfig, attempt int) TestResult {
 	start := time.Now()
 
@@ -78,14 +77,12 @@ func TestSTUNService(ctx context.Context, service ServiceConfig, attempt int) Te
 	}
 	defer c.Close()
 
-	// Building the request: Binding Request
 	message := stun.MustBuild(stun.TransactionID, stun.BindingRequest)
 
 	var xorAddr stun.XORMappedAddress
 	var otherAddr stun.OtherAddress
 	var mappedAddr stun.MappedAddress
 
-	// Callback to handle response
 	err = c.Do(message, func(res stun.Event) {
 		if res.Error != nil {
 			// Don't return here, just let the outer error handler catch it if needed,
@@ -125,7 +122,6 @@ func TestSTUNService(ctx context.Context, service ServiceConfig, attempt int) Te
 		}
 	}
 
-	// Validate we got an IP
 	if xorAddr.IP == nil {
 		return TestResult{
 			Service:   service.Name,
