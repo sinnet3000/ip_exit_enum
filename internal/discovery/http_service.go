@@ -90,10 +90,7 @@ func extractIPs(content string) []string {
 			return
 		}
 		addr, err := netip.ParseAddr(candidate)
-		if err != nil || addr.IsLoopback() || addr.IsPrivate() || addr.IsUnspecified() {
-			return
-		}
-		if addr.IsLinkLocalMulticast() || addr.IsLinkLocalUnicast() {
+		if err != nil || !addr.IsGlobalUnicast() {
 			return
 		}
 		cleanIP := addr.String()
