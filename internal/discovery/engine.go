@@ -132,7 +132,7 @@ func (e *Engine) Run(ctx context.Context, verbose bool) {
 	}
 
 	// Final Report
-	e.ui.RenderLiveResults(e.getUpdate()) // Final update
+	e.ui.RenderLiveResults(e.getUpdateSnapshot()) // Final update
 
 	if verbose {
 		var verboseItems []ui.VerboseResultItem
@@ -191,7 +191,6 @@ func (e *Engine) runBatch(ctx context.Context, services []ServiceConfig, tester 
 
 func (e *Engine) processResult(res TestResult) {
 	e.mu.Lock()
-	defer e.mu.Unlock()
 
 	e.testsCompleted++
 	e.results = append(e.results, res)
@@ -219,16 +218,39 @@ func (e *Engine) processResult(res TestResult) {
 		e.serviceStatus[res.Service] = "failed"
 	}
 
+	update := e.getUpdateSnapshotLocked()
+	e.mu.Unlock()
+
 	// Trigger UI update
-	e.ui.RenderLiveResults(e.getUpdate())
+	e.ui.RenderLiveResults(update)
 }
 
-func (e *Engine) getUpdate() ui.ResultUpdate {
+func (e *Engine) getUpdateSnapshot() ui.ResultUpdate {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.getUpdateSnapshotLocked()
+}
+
+func (e *Engine) getUpdateSnapshotLocked() ui.ResultUpdate {
 	confidence, consensus := e.CalculateConfidence()
+
+	ipsFound := make(map[string]int, len(e.ipsFound))
+	for ip, count := range e.ipsFound {
+		ipsFound[ip] = count
+	}
+
+	familyIPs := make(map[string]map[string]int, len(e.familyIPs))
+	for fam, counts := range e.familyIPs {
+		copyCounts := make(map[string]int, len(counts))
+		for ip, count := range counts {
+			copyCounts[ip] = count
+		}
+		familyIPs[fam] = copyCounts
+	}
 
 	// Check for load balancing (more than 1 IP per family)
 	loadBalancing := make(map[string]bool)
-	for fam, counts := range e.familyIPs {
+	for fam, counts := range familyIPs {
 		if len(counts) > 1 {
 			loadBalancing[fam] = true
 		}
@@ -239,8 +261,8 @@ func (e *Engine) getUpdate() ui.ResultUpdate {
 		CurrentPhase:       e.currentPhase,
 		CompletedTests:     e.testsCompleted,
 		TotalTests:         e.testsTotal,
-		IPs:                e.ipsFound,
-		IPFamilies:         e.familyIPs,
+		IPs:                ipsFound,
+		IPFamilies:         familyIPs,
 		ConfidenceLevel:    confidence,
 		Consensus:          consensus,
 		LoadBalancingFound: loadBalancing,
