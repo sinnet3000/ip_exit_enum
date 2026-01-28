@@ -7,7 +7,6 @@ import (
 	"time"
 )
 
-// ANSI color codes
 const (
 	ColorHeader           = "\033[95m"
 	ColorOKBlue           = "\033[94m"
@@ -23,12 +22,10 @@ const (
 	ColorProgressEmpty    = "\033[47m"
 )
 
-// Display handles terminal output and live updates
 type Display struct {
 	lastLines int
 }
 
-// ResultUpdate represents a snapshot of the current state for rendering
 type ResultUpdate struct {
 	StartTime          time.Time
 	CurrentPhase       string
@@ -41,19 +38,16 @@ type ResultUpdate struct {
 	LoadBalancingFound map[string]bool
 }
 
-// NewDisplay creates a new display handler
 func NewDisplay() *Display {
 	return &Display{}
 }
 
-// ClearPrevious clears the lines printed by the last render
 func (d *Display) ClearPrevious() {
 	if d.lastLines > 0 {
 		fmt.Printf("\033[%dA\033[J", d.lastLines)
 	}
 }
 
-// ProgressBar generates a progress bar string
 func (d *Display) ProgressBar(completed, total int, width int) string {
 	if total == 0 {
 		return fmt.Sprintf("[%s] 0/0", strings.Repeat(" ", width))
@@ -68,11 +62,9 @@ func (d *Display) ProgressBar(completed, total int, width int) string {
 	return fmt.Sprintf("[%s] %d/%d (%.1f%%)", bar, completed, total, pct*100)
 }
 
-// FormatIPList returns a formatted list of discovered IPs
 func (d *Display) FormatIPList(ipCounts map[string]int) []string {
 	var lines []string
 
-	// Convert map to slice for sorting
 	type ipHit struct {
 		ip    string
 		count int
@@ -85,7 +77,6 @@ func (d *Display) FormatIPList(ipCounts map[string]int) []string {
 		totalHits += count
 	}
 
-	// Sort by count (descending)
 	sort.Slice(hits, func(i, j int) bool {
 		return hits[i].count > hits[j].count
 	})
@@ -111,7 +102,6 @@ func (d *Display) FormatIPList(ipCounts map[string]int) []string {
 	return lines
 }
 
-// RenderLiveResults prints the current status to the terminal
 func (d *Display) RenderLiveResults(state ResultUpdate) {
 	d.ClearPrevious()
 	var lines []string
@@ -125,7 +115,6 @@ func (d *Display) RenderLiveResults(state ResultUpdate) {
 	lines = append(lines, fmt.Sprintf("Overall Progress: %s", d.ProgressBar(state.CompletedTests, state.TotalTests, 40)))
 	lines = append(lines, "")
 
-	// Families to check
 	families := []string{"IPv4", "IPv6"}
 	hasIPs := false
 
@@ -139,7 +128,6 @@ func (d *Display) RenderLiveResults(state ResultUpdate) {
 			lines = append(lines, fmt.Sprintf(" %s%s:%s", ColorBold, fam, ColorEnd))
 			lines = append(lines, d.FormatIPList(ips)...)
 
-			// Load balancing status
 			isBalanced := len(ips) > 1
 			summaryColor := ColorOKGreen
 			summaryIcon := "📍"
@@ -175,7 +163,6 @@ func (d *Display) RenderLiveResults(state ResultUpdate) {
 	d.lastLines = len(lines)
 }
 
-// VerboseResultItem holds data for detailed report
 type VerboseResultItem struct {
 	Service   string
 	Protocol  string
@@ -186,7 +173,6 @@ type VerboseResultItem struct {
 	Error     string
 }
 
-// PrintVerbose prints the detailed execution log
 func (d *Display) PrintVerbose(results []VerboseResultItem) {
 	fmt.Println("\n📋 Detailed results:")
 
@@ -203,7 +189,6 @@ func (d *Display) PrintVerbose(results []VerboseResultItem) {
 			ipsDisplay = fmt.Sprintf("(%s)", r.Error)
 		}
 
-		// Truncate error/IPs if too long
 		if len(ipsDisplay) > 45 {
 			ipsDisplay = ipsDisplay[:42] + "..."
 		}

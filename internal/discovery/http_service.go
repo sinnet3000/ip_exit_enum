@@ -13,7 +13,6 @@ import (
 	"time"
 )
 
-// ServiceConfig defines a testable service endpoint
 type ServiceConfig struct {
 	Name          string
 	URL           string
@@ -23,7 +22,6 @@ type ServiceConfig struct {
 	ExtractField  string // for JSON
 }
 
-// TestResult holds the outcome of a single service test
 type TestResult struct {
 	Service   string
 	Protocol  string
@@ -35,8 +33,6 @@ type TestResult struct {
 	Error     error
 }
 
-// HTTPClientFactory creates clients with specific transport configurations
-// This is crucial for forcing IPv4 vs IPv6 connections
 type HTTPClientFactory interface {
 	CreateClient(family string, timeout time.Duration) *http.Client
 }
@@ -81,7 +77,6 @@ func (f *defaultHTTPClientFactory) CreateClient(family string, timeout time.Dura
 var ipv4Regex = regexp.MustCompile(`\b\d{1,3}(?:\.\d{1,3}){3}\b`)
 var ipv6Regex = regexp.MustCompile(`\b[0-9a-fA-F:]*:[0-9a-fA-F:]*\b`)
 
-// extractIPs finds all public IPs in a string
 func extractIPs(content string) []string {
 	var valid []string
 	seen := make(map[string]bool)
