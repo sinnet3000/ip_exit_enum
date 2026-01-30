@@ -85,7 +85,7 @@ func extractIPs(content string) []string {
 			return
 		}
 		addr, err := netip.ParseAddr(candidate)
-		if err != nil || !addr.IsGlobalUnicast() {
+		if err != nil || !addr.IsGlobalUnicast() || addr.IsPrivate() {
 			return
 		}
 		cleanIP := addr.String()
