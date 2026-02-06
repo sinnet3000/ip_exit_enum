@@ -33,13 +33,7 @@ type TestResult struct {
 	Error     error
 }
 
-type HTTPClientFactory interface {
-	CreateClient(family string, timeout time.Duration) *http.Client
-}
-
-type defaultHTTPClientFactory struct{}
-
-func (f *defaultHTTPClientFactory) CreateClient(family string, timeout time.Duration) *http.Client {
+func newHTTPClient(family string, timeout time.Duration) *http.Client {
 	dialTimeout := 5 * time.Second
 	clientTimeout := 10 * time.Second
 	if timeout > 0 {
@@ -124,8 +118,7 @@ func TestHTTPService(ctx context.Context, service ServiceConfig, attempt int) Te
 		family = "IPv6"
 	}
 
-	clientFactory := &defaultHTTPClientFactory{}
-	client := clientFactory.CreateClient(family, service.Timeout)
+	client := newHTTPClient(family, service.Timeout)
 
 	req, err := http.NewRequestWithContext(reqCtx, "GET", service.URL, nil)
 	if err != nil {
