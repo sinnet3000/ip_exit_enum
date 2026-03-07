@@ -71,31 +71,41 @@ Overall Progress: [██████████████            ] 18/30
 
 ## Installation
 
-### Requirements
-- **Go** 1.22.5 or newer
+### Quick Install (macOS / Linux)
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/sinnet3000/ip_exit_enum/main/scripts/install.sh | bash
+```
 
 ### Build from Source
 
 ```sh
 git clone https://github.com/sinnet3000/ip_exit_enum.git
 cd ip_exit_enum
-make build
+make install
 ```
 
-The compiled binary will be available in the `bin/` directory.
+Requires **Go** 1.22.5 or newer. Installs to `~/.local/bin/`.
 
 ---
 
 ## Usage
 
 ```sh
-./bin/ip_exit_enum
+ip_exit_enum
 ```
 
 For detailed output:
 
 ```sh
-./bin/ip_exit_enum -v
+ip_exit_enum -v
+```
+
+### Other Flags
+
+```sh
+ip_exit_enum -version   # Show version
+ip_exit_enum -update    # Self-update to latest release
 ```
 
 ---
