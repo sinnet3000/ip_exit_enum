@@ -1,6 +1,6 @@
 module ip_exit_enum
 
-go 1.25.5
+go 1.26.1
 
 require github.com/pion/stun/v2 v2.0.0
 
