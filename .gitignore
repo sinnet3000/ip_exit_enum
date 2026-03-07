@@ -210,3 +210,4 @@ __marimo__/
 *.test
 *.out
 vendor/
+bin/
