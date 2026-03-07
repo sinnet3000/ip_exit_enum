@@ -110,20 +110,6 @@ ip_exit_enum -update    # Self-update to latest release
 
 ---
 
-## Legacy Python Version
-
-The original Python implementation is preserved in the `legacy/` directory for reference and historical context. It is not feature-equivalent to the Go version.
-
-To run it:
-
-```sh
-cd legacy
-pip install -r requirements.txt
-python ip_exit_enum.py
-```
-
----
-
 ## License
 
 This project is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)**.
