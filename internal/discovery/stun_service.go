@@ -19,13 +19,10 @@ func TestSTUNService(ctx context.Context, service ServiceConfig, attempt int) Te
 		defer cancel()
 	}
 
-	// Determine network based on protocol/name
 	network := "udp"
 	if service.Protocol == "UDP-STUN6" {
 		network = "udp6"
 	} else if service.Protocol == "UDP-STUN" {
-		// Strictly force v4 if requested, though "udp" usually tries v4 first or both
-		// To match Python's strict separation:
 		network = "udp4"
 	}
 
@@ -61,7 +58,6 @@ func TestSTUNService(ctx context.Context, service ServiceConfig, attempt int) Te
 		}
 	}
 
-	// Create STUN client (this connects to the server)
 	c, err := stun.NewClient(conn)
 	if err != nil {
 		conn.Close()
@@ -82,21 +78,18 @@ func TestSTUNService(ctx context.Context, service ServiceConfig, attempt int) Te
 	var xorAddr stun.XORMappedAddress
 	var otherAddr stun.OtherAddress
 	var mappedAddr stun.MappedAddress
+	var eventErr error
 
 	err = c.Do(message, func(res stun.Event) {
 		if res.Error != nil {
-			// Don't return here, just let the outer error handler catch it if needed,
-			// or we capture it to variable.
-			// In pion/stun, Do blocks until success or timeout/error
+			eventErr = res.Error
 			return
 		}
 
-		// Try to find ANY address attribute
 		if getErr := xorAddr.GetFrom(res.Message); getErr == nil {
 			return
 		}
 		if getErr := otherAddr.GetFrom(res.Message); getErr == nil {
-			// Convert OtherAddress to XORMappedAddress logic for IP extraction
 			xorAddr.IP = otherAddr.IP
 			xorAddr.Port = otherAddr.Port
 			return
@@ -118,6 +111,18 @@ func TestSTUNService(ctx context.Context, service ServiceConfig, attempt int) Te
 			Attempt:   attempt,
 			Success:   false,
 			Error:     fmt.Errorf("stun request failed: %w", err),
+			Latency:   latency,
+		}
+	}
+
+	if eventErr != nil {
+		return TestResult{
+			Service:   service.Name,
+			Protocol:  service.Protocol,
+			Timestamp: start,
+			Attempt:   attempt,
+			Success:   false,
+			Error:     fmt.Errorf("stun request failed: %w", eventErr),
 			Latency:   latency,
 		}
 	}

@@ -29,7 +29,7 @@ type Engine struct {
 	testsTotal     int
 	currentPhase   string
 
-	mu sync.Mutex // Protects state
+	mu sync.Mutex
 }
 
 func NewEngine(httpServices, udpServices []ServiceConfig) *Engine {
@@ -85,43 +85,10 @@ func (e *Engine) Run(ctx context.Context, verbose bool) {
 
 	e.testsTotal = (len(e.httpServices) * httpSamples) + (len(e.udpServices) * udpSamples)
 
-	for attempt := 1; attempt <= httpSamples; attempt++ {
-		e.currentPhase = fmt.Sprintf("HTTP(S) Discovery – sample %d/%d", attempt, httpSamples)
+	e.runSamples(ctx, "HTTP(S) Discovery", e.httpServices, TestHTTPService, httpSamples)
+	e.runSamples(ctx, "UDP-STUN Discovery", e.udpServices, TestSTUNService, udpSamples)
 
-		services := make([]ServiceConfig, len(e.httpServices))
-		copy(services, e.httpServices)
-		rand.Shuffle(len(services), func(i, j int) { services[i], services[j] = services[j], services[i] })
-
-		e.runBatch(ctx, services, TestHTTPService, attempt)
-
-		if ctx.Err() != nil {
-			break
-		}
-
-		if attempt < httpSamples {
-			time.Sleep(300 * time.Millisecond)
-		}
-	}
-
-	for attempt := 1; attempt <= udpSamples; attempt++ {
-		e.currentPhase = fmt.Sprintf("UDP-STUN Discovery – sample %d/%d", attempt, udpSamples)
-
-		services := make([]ServiceConfig, len(e.udpServices))
-		copy(services, e.udpServices)
-		rand.Shuffle(len(services), func(i, j int) { services[i], services[j] = services[j], services[i] })
-
-		e.runBatch(ctx, services, TestSTUNService, attempt)
-
-		if ctx.Err() != nil {
-			break
-		}
-
-		if attempt < udpSamples {
-			time.Sleep(300 * time.Millisecond)
-		}
-	}
-
-	e.ui.RenderLiveResults(e.getUpdateSnapshot()) // Final update
+	e.ui.RenderLiveResults(e.getUpdateSnapshot())
 
 	if verbose {
 		var verboseItems []ui.VerboseResultItem
@@ -149,14 +116,29 @@ func (e *Engine) Run(ctx context.Context, verbose bool) {
 
 type TesterFunc func(context.Context, ServiceConfig, int) TestResult
 
-func (e *Engine) runBatch(ctx context.Context, services []ServiceConfig, tester TesterFunc, attempt int) {
-	// Simple sequential execution for visual clarity, mirroring Python version.
-	// Can be parallelized with workers if needed, but sequential output is nicer for this tool.
-	// Note: Use a worker pool if user wants raw speed, but "spirit" implies UX focus.
-	// Let's do semi-parallel: 4 concurrent workers to speed up but keep UI readable.
+func (e *Engine) runSamples(ctx context.Context, phase string, services []ServiceConfig, tester TesterFunc, samples int) {
+	for attempt := 1; attempt <= samples; attempt++ {
+		e.currentPhase = fmt.Sprintf("%s – sample %d/%d", phase, attempt, samples)
 
+		shuffled := make([]ServiceConfig, len(services))
+		copy(shuffled, services)
+		rand.Shuffle(len(shuffled), func(i, j int) { shuffled[i], shuffled[j] = shuffled[j], shuffled[i] })
+
+		e.runBatch(ctx, shuffled, tester, attempt)
+
+		if ctx.Err() != nil {
+			break
+		}
+
+		if attempt < samples {
+			time.Sleep(300 * time.Millisecond)
+		}
+	}
+}
+
+func (e *Engine) runBatch(ctx context.Context, services []ServiceConfig, tester TesterFunc, attempt int) {
 	var wg sync.WaitGroup
-	semaphore := make(chan struct{}, 4) // Limit concurrency
+	semaphore := make(chan struct{}, 4)
 
 	for _, svc := range services {
 		if ctx.Err() != nil {
@@ -268,7 +250,6 @@ func (e *Engine) CalculateConfidence() (string, string) {
 	}
 	successRate := float64(successCount) / total
 
-	// 1. Success Rate Component (0-40 points)
 	score := 0.0
 	if successRate >= 0.95 {
 		score += 40
@@ -282,7 +263,6 @@ func (e *Engine) CalculateConfidence() (string, string) {
 		score += 8
 	}
 
-	// 2. Sample Size Component (0-25 points)
 	if successCount >= 15 {
 		score += 25
 	} else if successCount >= 10 {
@@ -295,7 +275,6 @@ func (e *Engine) CalculateConfidence() (string, string) {
 		score += 5
 	}
 
-	// 3. Diversity Component (0-15 points)
 	protocols := make(map[string]bool)
 	for _, r := range e.results {
 		if r.Success {
@@ -310,8 +289,6 @@ func (e *Engine) CalculateConfidence() (string, string) {
 		score += 5
 	}
 
-	// 4. Consistency/Consensus Component (0-20 points)
-	// Do we have a clear winner for each family?
 	isConsistent := true
 	consensusMsg := "Strong Consensus"
 
@@ -329,11 +306,9 @@ func (e *Engine) CalculateConfidence() (string, string) {
 			}
 		}
 
-		// Calculate dominance
 		dominance := float64(maxHits) / float64(totalFamHits)
 
 		if dominance < 0.8 && len(counts) > 1 {
-			// Less than 80% agree on one IP
 			isConsistent = false
 			if dominance < 0.6 {
 				consensusMsg = fmt.Sprintf("Split-Brain (%s)", fam)
@@ -341,23 +316,14 @@ func (e *Engine) CalculateConfidence() (string, string) {
 				consensusMsg = fmt.Sprintf("Weak Consensus (%s)", fam)
 			}
 		}
-
-		// Bonus for repeated confirmation of single IP
-		if len(counts) == 1 && maxHits >= 5 {
-			// Perfect consistency
-		} else if len(counts) > 1 {
-			// Penalty handled by 'isConsistent' flag
-		}
 	}
 
 	if isConsistent {
 		score += 20
 	} else {
-		// Penalty for inconsistency
 		score -= 10
 	}
 
-	// Map score to label
 	label := "Low"
 	if score >= 85 {
 		label = "Very High"
@@ -371,11 +337,8 @@ func (e *Engine) CalculateConfidence() (string, string) {
 		label = "Low-Medium"
 	}
 
-	// Append score for debugging/transparency if needed, or keeping it clean
-	// label = fmt.Sprintf("%s (%.0f)", label, score)
-
 	if !isConsistent {
-		label += " / " + consensusMsg // e.g. "Medium / Split-Brain (IPv4)"
+		label += " / " + consensusMsg
 	}
 
 	return label, consensusMsg

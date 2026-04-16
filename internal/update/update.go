@@ -25,46 +25,51 @@ const (
 	binaryName   = "ip_exit_enum"
 )
 
-type Release struct {
-	TagName string  `json:"tag_name"`
-	Assets  []Asset `json:"assets"`
+type Version string
+type DownloadURL string
+type AssetName string
+type Checksum string
+
+type releaseResponse struct {
+	TagName string         `json:"tag_name"`
+	Assets  []releaseAsset `json:"assets"`
 }
 
-type Asset struct {
+type releaseAsset struct {
 	Name               string `json:"name"`
 	Size               int64  `json:"size"`
 	BrowserDownloadURL string `json:"browser_download_url"`
 }
 
 type UpdateInfo struct {
-	CurrentVersion string
-	LatestVersion  string
-	DownloadURL    string
-	AssetName      string
+	CurrentVersion Version
+	LatestVersion  Version
+	DownloadURL    DownloadURL
+	AssetName      AssetName
 	Size           int64
-	Checksum       string
+	Checksum       Checksum
 }
 
 func CheckForUpdate() (*UpdateInfo, error) {
-	currentVersion := strings.TrimPrefix(version.Version, "v")
+	currentVersion := Version(strings.TrimPrefix(version.Version, "v"))
 
 	release, err := fetchLatestRelease()
 	if err != nil {
 		return nil, fmt.Errorf("check for updates: %w", err)
 	}
 
-	latestVersion := strings.TrimPrefix(release.TagName, "v")
+	latestVersion := Version(strings.TrimPrefix(release.TagName, "v"))
 
 	if !isNewer(latestVersion, currentVersion) {
 		return nil, nil
 	}
 
-	assetName := fmt.Sprintf("%s_%s_%s_%s.tar.gz", binaryName, latestVersion, runtime.GOOS, runtime.GOARCH)
-	var asset *Asset
-	var checksumsAsset *Asset
+	assetName := AssetName(fmt.Sprintf("%s_%s_%s_%s.tar.gz", binaryName, latestVersion, runtime.GOOS, runtime.GOARCH))
+	var asset *releaseAsset
+	var checksumsAsset *releaseAsset
 	for i := range release.Assets {
 		a := &release.Assets[i]
-		if a.Name == assetName {
+		if a.Name == string(assetName) {
 			asset = a
 		}
 		if a.Name == "SHA256SUMS" {
@@ -76,16 +81,16 @@ func CheckForUpdate() (*UpdateInfo, error) {
 		return nil, fmt.Errorf("no release asset found for %s/%s", runtime.GOOS, runtime.GOARCH)
 	}
 
-	var checksum string
+	var checksum Checksum
 	if checksumsAsset != nil {
-		checksum, _ = fetchChecksumFromFile(checksumsAsset.BrowserDownloadURL, assetName)
+		checksum, _ = fetchChecksumFromFile(checksumsAsset.BrowserDownloadURL, string(assetName))
 	}
 
 	return &UpdateInfo{
-		CurrentVersion: version.Version,
-		LatestVersion:  release.TagName,
-		DownloadURL:    asset.BrowserDownloadURL,
-		AssetName:      asset.Name,
+		CurrentVersion: Version(version.Version),
+		LatestVersion:  Version(release.TagName),
+		DownloadURL:    DownloadURL(asset.BrowserDownloadURL),
+		AssetName:      AssetName(asset.Name),
 		Size:           asset.Size,
 		Checksum:       checksum,
 	}, nil
@@ -102,16 +107,16 @@ func PerformUpdate(info *UpdateInfo) error {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	archivePath := filepath.Join(tmpDir, info.AssetName)
+	archivePath := filepath.Join(tmpDir, string(info.AssetName))
 
 	fmt.Printf("Downloading %s...\n", info.AssetName)
-	checksum, err := downloadFile(info.DownloadURL, archivePath)
+	checksum, err := downloadFile(string(info.DownloadURL), archivePath)
 	if err != nil {
 		return fmt.Errorf("download: %w", err)
 	}
 
 	fmt.Print("Verifying checksum... ")
-	if !strings.EqualFold(checksum, info.Checksum) {
+	if !strings.EqualFold(checksum, string(info.Checksum)) {
 		fmt.Println("FAILED")
 		return fmt.Errorf("checksum mismatch: expected %s, got %s", info.Checksum, checksum)
 	}
@@ -162,7 +167,7 @@ func PerformUpdate(info *UpdateInfo) error {
 	return nil
 }
 
-func fetchLatestRelease() (*Release, error) {
+func fetchLatestRelease() (*releaseResponse, error) {
 	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Get(githubAPIURL)
 	if err != nil {
@@ -174,7 +179,7 @@ func fetchLatestRelease() (*Release, error) {
 		return nil, fmt.Errorf("GitHub API returned %s", resp.Status)
 	}
 
-	var release Release
+	var release releaseResponse
 	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
 		return nil, err
 	}
@@ -308,7 +313,7 @@ func copyFile(src, dst string) error {
 	return out.Close()
 }
 
-func fetchChecksumFromFile(url, assetName string) (string, error) {
+func fetchChecksumFromFile(url, assetName string) (Checksum, error) {
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Get(url)
 	if err != nil {
@@ -329,27 +334,27 @@ func fetchChecksumFromFile(url, assetName string) (string, error) {
 	for _, line := range strings.Split(string(body), "\n") {
 		if strings.Contains(line, assetName) {
 			if match := re.FindString(line); match != "" {
-				return strings.ToLower(match), nil
+				return Checksum(strings.ToLower(match)), nil
 			}
 		}
 	}
 	return "", nil
 }
 
-func isNewer(v1, v2 string) bool {
-	v1 = strings.TrimPrefix(v1, "v")
-	v2 = strings.TrimPrefix(v2, "v")
+func isNewer(v1, v2 Version) bool {
+	v1s := strings.TrimPrefix(string(v1), "v")
+	v2s := strings.TrimPrefix(string(v2), "v")
 
 	// Dev builds always have an update available
-	if !isSemver(v2) {
-		return isSemver(v1)
+	if !isSemver(v2s) {
+		return isSemver(v1s)
 	}
-	if !isSemver(v1) {
+	if !isSemver(v1s) {
 		return false
 	}
 
-	parts1 := strings.Split(v1, ".")
-	parts2 := strings.Split(v2, ".")
+	parts1 := strings.Split(v1s, ".")
+	parts2 := strings.Split(v2s, ".")
 
 	for i := range 3 {
 		var n1, n2 int

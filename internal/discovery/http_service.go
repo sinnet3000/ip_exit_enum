@@ -6,32 +6,12 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"net/netip"
 	"net/http"
+	"net/netip"
 	"regexp"
 	"strings"
 	"time"
 )
-
-type ServiceConfig struct {
-	Name          string
-	URL           string
-	Protocol      string
-	Timeout       time.Duration
-	ExtractMethod string // 'text', 'json', 'headers'
-	ExtractField  string // for JSON
-}
-
-type TestResult struct {
-	Service   string
-	Protocol  string
-	IPs       []string
-	Timestamp time.Time
-	Latency   time.Duration
-	Success   bool
-	Attempt   int
-	Error     error
-}
 
 func newHTTPClient(family string, timeout time.Duration) *http.Client {
 	dialTimeout := 5 * time.Second
@@ -45,7 +25,6 @@ func newHTTPClient(family string, timeout time.Duration) *http.Client {
 		DisableKeepAlives: true,
 	}
 
-	// Restrict dialer to specific address family if needed
 	dialer := &net.Dialer{
 		Timeout:   dialTimeout,
 		KeepAlive: 30 * time.Second,
@@ -67,7 +46,6 @@ func newHTTPClient(family string, timeout time.Duration) *http.Client {
 	}
 }
 
-// Regexes for candidate extraction; validation uses netip.ParseAddr.
 var ipv4Regex = regexp.MustCompile(`\b\d{1,3}(?:\.\d{1,3}){3}\b`)
 var ipv6Regex = regexp.MustCompile(`\b[0-9a-fA-F:]*:[0-9a-fA-F:]*\b`)
 
@@ -108,8 +86,6 @@ func TestHTTPService(ctx context.Context, service ServiceConfig, attempt int) Te
 		defer cancel()
 	}
 
-	// Determine family hint from service name or config
-	// Ideally ServiceConfig would have a 'Family' field, but for now we infer or use default
 	family := "dual"
 	if strings.Contains(service.Name, "ipv4") || strings.Contains(service.Name, "v4") {
 		family = "IPv4"

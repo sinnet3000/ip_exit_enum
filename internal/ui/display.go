@@ -31,8 +31,8 @@ type ResultUpdate struct {
 	CurrentPhase       string
 	CompletedTests     int
 	TotalTests         int
-	IPs                map[string]int            // IP -> count
-	IPFamilies         map[string]map[string]int // Family -> IP -> count
+	IPs                map[string]int
+	IPFamilies         map[string]map[string]int
 	ConfidenceLevel    string
 	Consensus          string
 	LoadBalancingFound map[string]bool

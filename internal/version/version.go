@@ -1,11 +1,9 @@
 package version
 
-import (
-	"runtime/debug"
-)
+import "runtime/debug"
 
 // Version is the build version. Set via -ldflags for releases,
-// otherwise falls back to git commit hash from VCS info.
+// otherwise falls back to VCS info from the local build.
 var Version = "dev"
 
 func init() {
