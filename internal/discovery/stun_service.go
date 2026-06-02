@@ -7,7 +7,7 @@ import (
 	"net/netip"
 	"time"
 
-	"github.com/pion/stun/v2"
+	"github.com/pion/stun/v3"
 )
 
 func TestSTUNService(ctx context.Context, service ServiceConfig, attempt int) TestResult {
