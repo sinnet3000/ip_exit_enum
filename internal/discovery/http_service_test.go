@@ -85,4 +85,24 @@ func TestHTTPServiceExecution(t *testing.T) {
 	if res.Success {
 		t.Fatalf("expected timeout failure, got %v", res)
 	}
+
+	// Test 4: Default timeout (Timeout <= 0) produces bounded request
+	res = TestHTTPService(context.Background(), ServiceConfig{
+		Name: "default-timeout-test", URL: server.URL + "/ok", Protocol: "HTTP",
+	}, 1)
+	if !res.Success || len(res.IPs) != 1 {
+		t.Fatalf("expected success with default timeout, got %v", res)
+	}
+}
+
+func TestGetHTTPClient(t *testing.T) {
+	if getHTTPClient("IPv4") != clientIPv4 {
+		t.Fatal("expected clientIPv4 for IPv4")
+	}
+	if getHTTPClient("IPv6") != clientIPv6 {
+		t.Fatal("expected clientIPv6 for IPv6")
+	}
+	if getHTTPClient("") != clientDual {
+		t.Fatal("expected clientDual for dual-stack default")
+	}
 }
