@@ -24,7 +24,6 @@ type Engine struct {
 	results      []TestResult
 	ui           *ui.Display
 
-	ipsFound        map[string]int
 	familyIPs       map[string]map[string]int
 	deadServices    map[string]error
 	startTime       time.Time
@@ -32,10 +31,9 @@ type Engine struct {
 	testsSuccessful int
 	testsTotal      int
 	currentPhase    string
+	lastRender      time.Time
 
-	lastRender time.Time
-	renderMu   sync.Mutex
-	mu         sync.Mutex
+	mu sync.Mutex
 }
 
 func NewEngine(httpServices, udpServices []ServiceConfig) *Engine {
@@ -43,7 +41,6 @@ func NewEngine(httpServices, udpServices []ServiceConfig) *Engine {
 		httpServices: httpServices,
 		udpServices:  udpServices,
 		ui:           ui.NewDisplay(),
-		ipsFound:     make(map[string]int),
 		familyIPs: map[string]map[string]int{
 			"IPv4": make(map[string]int),
 			"IPv6": make(map[string]int),
@@ -98,7 +95,6 @@ func (e *Engine) RunWithOptions(ctx context.Context, opts RunOptions) {
 	e.testsTotal = (len(e.httpServices) * samples) + (len(e.udpServices) * samples)
 	e.currentPhase = "Concurrent Discovery"
 
-	// Run HTTP and UDP-STUN discovery concurrently
 	var wg sync.WaitGroup
 	wg.Add(2)
 
@@ -124,18 +120,14 @@ func (e *Engine) RunWithOptions(ctx context.Context, opts RunOptions) {
 	if opts.Verbose {
 		var verboseItems []ui.VerboseResultItem
 		for _, r := range e.results {
-			errMsg := ""
-			if r.Error != nil {
-				errMsg = r.Error.Error()
-			}
 			verboseItems = append(verboseItems, ui.VerboseResultItem{
 				Service:   r.Service,
 				Protocol:  r.Protocol,
 				Attempt:   r.Attempt,
 				IPs:       r.IPs,
-				LatencyMs: float64(r.Latency.Milliseconds()),
+				LatencyMs: r.LatencyMs,
 				Success:   r.Success,
-				Error:     errMsg,
+				Error:     r.ErrorMsg,
 			})
 		}
 		e.ui.PrintVerbose(verboseItems)
@@ -185,7 +177,6 @@ func (e *Engine) runBatch(ctx context.Context, services []ServiceConfig, tester 
 		prevErr, isDead := e.deadServices[svc.Name]
 		e.mu.Unlock()
 
-		// Skip repeat timeouts for services unreachable on attempt 1
 		if isDead && attempt > 1 {
 			e.processResult(TestResult{
 				Service:   svc.Name,
@@ -227,6 +218,13 @@ func (e *Engine) runBatch(ctx context.Context, services []ServiceConfig, tester 
 }
 
 func (e *Engine) processResult(res TestResult, jsonMode bool) {
+	if res.LatencyMs == 0 && res.Latency > 0 {
+		res.LatencyMs = float64(res.Latency.Milliseconds())
+	}
+	if res.Error != nil && res.ErrorMsg == "" {
+		res.ErrorMsg = res.Error.Error()
+	}
+
 	e.mu.Lock()
 
 	e.testsCompleted++
@@ -235,8 +233,6 @@ func (e *Engine) processResult(res TestResult, jsonMode bool) {
 	if res.Success && len(res.IPs) > 0 {
 		e.testsSuccessful++
 		for _, ip := range res.IPs {
-			e.ipsFound[ip]++
-
 			family := "IPv4"
 			parsedIP := net.ParseIP(ip)
 			if parsedIP != nil && parsedIP.To4() == nil {
@@ -256,29 +252,34 @@ func (e *Engine) maybeRender(force bool, jsonMode bool) {
 		return
 	}
 
-	e.renderMu.Lock()
-	defer e.renderMu.Unlock()
-
+	e.mu.Lock()
 	now := time.Now()
 	if !force && now.Sub(e.lastRender) < 100*time.Millisecond {
+		e.mu.Unlock()
 		return
 	}
 	e.lastRender = now
+	snapshot := e.getUpdateSnapshotLocked()
+	e.mu.Unlock()
 
-	snapshot := e.getUpdateSnapshot()
 	e.ui.RenderLiveResults(snapshot)
 }
 
-func (e *Engine) getUpdateSnapshot() ui.ResultUpdate {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	confidence, consensus := e.CalculateConfidence()
-
-	ipsFound := make(map[string]int, len(e.ipsFound))
-	for ip, count := range e.ipsFound {
-		ipsFound[ip] = count
+func (e *Engine) calcProtocolStatsLocked() map[string]ui.ProtocolStat {
+	stats := make(map[string]ui.ProtocolStat)
+	for _, r := range e.results {
+		stat := stats[r.Protocol]
+		stat.Attempted++
+		if r.Success {
+			stat.Succeeded++
+		}
+		stats[r.Protocol] = stat
 	}
+	return stats
+}
+
+func (e *Engine) getUpdateSnapshotLocked() ui.ResultUpdate {
+	confidence, consensus := e.CalculateConfidence()
 
 	familyIPs := make(map[string]map[string]int, len(e.familyIPs))
 	for fam, counts := range e.familyIPs {
@@ -296,24 +297,13 @@ func (e *Engine) getUpdateSnapshot() ui.ResultUpdate {
 		}
 	}
 
-	protocolStats := make(map[string]ui.ProtocolStat)
-	for _, r := range e.results {
-		stat := protocolStats[r.Protocol]
-		stat.Attempted++
-		if r.Success {
-			stat.Succeeded++
-		}
-		protocolStats[r.Protocol] = stat
-	}
-
 	return ui.ResultUpdate{
 		StartTime:              e.startTime,
 		CurrentPhase:           e.currentPhase,
 		CompletedTests:         e.testsCompleted,
 		TotalTests:             e.testsTotal,
 		SuccessfulTests:        e.testsSuccessful,
-		ProtocolStats:          protocolStats,
-		IPs:                    ipsFound,
+		ProtocolStats:          e.calcProtocolStatsLocked(),
 		IPFamilies:             familyIPs,
 		ConfidenceLevel:        confidence,
 		Consensus:              consensus,
@@ -405,16 +395,6 @@ func (e *Engine) outputJSON() {
 	confidence, consensus := e.CalculateConfidence()
 	durationMs := float64(time.Since(e.startTime).Milliseconds())
 
-	protocolStats := make(map[string]ui.ProtocolStat)
-	for _, r := range e.results {
-		stat := protocolStats[r.Protocol]
-		stat.Attempted++
-		if r.Success {
-			stat.Succeeded++
-		}
-		protocolStats[r.Protocol] = stat
-	}
-
 	discoveredIPs := make(map[string][]JSONIPEntry)
 	for fam, counts := range e.familyIPs {
 		total := 0
@@ -439,23 +419,6 @@ func (e *Engine) outputJSON() {
 		discoveredIPs[strings.ToLower(fam)] = entries
 	}
 
-	var detailed []JSONResultItem
-	for _, r := range e.results {
-		errMsg := ""
-		if r.Error != nil {
-			errMsg = r.Error.Error()
-		}
-		detailed = append(detailed, JSONResultItem{
-			Service:   r.Service,
-			Protocol:  r.Protocol,
-			Attempt:   r.Attempt,
-			Success:   r.Success,
-			IPs:       r.IPs,
-			LatencyMs: float64(r.Latency.Milliseconds()),
-			Error:     errMsg,
-		})
-	}
-
 	out := JSONOutput{
 		Timestamp:       e.startTime.UTC(),
 		DurationMs:      durationMs,
@@ -463,9 +426,9 @@ func (e *Engine) outputJSON() {
 		Consensus:       consensus,
 		CompletedTests:  e.testsCompleted,
 		SuccessfulTests: e.testsSuccessful,
-		ProtocolStats:   protocolStats,
+		ProtocolStats:   e.calcProtocolStatsLocked(),
 		DiscoveredIPs:   discoveredIPs,
-		DetailedResults: detailed,
+		DetailedResults: e.results,
 	}
 
 	enc := json.NewEncoder(os.Stdout)

@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/netip"
 	"regexp"
-	"strings"
 	"time"
 )
 
@@ -86,18 +85,16 @@ func TestHTTPService(ctx context.Context, service ServiceConfig, attempt int) Te
 		defer cancel()
 	}
 
-	family := "dual"
-	if strings.Contains(service.Name, "ipv4") || strings.Contains(service.Name, "v4") {
-		family = "IPv4"
-	}
-	if strings.Contains(service.Name, "ipv6") || strings.Contains(service.Name, "v6") {
-		family = "IPv6"
+	family := service.Family
+	if family == "" {
+		family = "dual"
 	}
 
 	client := newHTTPClient(family, service.Timeout)
 
 	req, err := http.NewRequestWithContext(reqCtx, "GET", service.URL, nil)
 	if err != nil {
+		lat := time.Since(start)
 		return TestResult{
 			Service:   service.Name,
 			Protocol:  service.Protocol,
@@ -105,7 +102,9 @@ func TestHTTPService(ctx context.Context, service ServiceConfig, attempt int) Te
 			Attempt:   attempt,
 			Success:   false,
 			Error:     err,
-			Latency:   time.Since(start),
+			ErrorMsg:  err.Error(),
+			Latency:   lat,
+			LatencyMs: float64(lat.Milliseconds()),
 		}
 	}
 

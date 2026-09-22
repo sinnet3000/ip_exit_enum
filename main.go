@@ -13,19 +13,7 @@ import (
 	"ip_exit_enum/internal/version"
 )
 
-type serviceProtocol string
-
-type extractMethod string
-
-const serviceTimeout = 5 * time.Second
-
-const (
-	protocolHTTP     serviceProtocol = "HTTP"
-	protocolUDPSTUN  serviceProtocol = "UDP-STUN"
-	protocolUDPSTUN6 serviceProtocol = "UDP-STUN6"
-
-	extractJSON extractMethod = "json"
-)
+const defaultTimeout = 5 * time.Second
 
 func main() {
 	verbose := flag.Bool("v", false, "Verbose output")
@@ -33,7 +21,7 @@ func main() {
 	doUpdate := flag.Bool("update", false, "Update to the latest version")
 	samples := flag.Int("samples", 3, "Number of probe samples")
 	interval := flag.Duration("interval", 300*time.Millisecond, "Interval between samples")
-	timeout := flag.Duration("timeout", serviceTimeout, "Per-probe timeout")
+	timeout := flag.Duration("timeout", defaultTimeout, "Per-probe timeout")
 	jsonOutput := flag.Bool("json", false, "Output results as JSON")
 	flag.Parse()
 
@@ -50,27 +38,27 @@ func main() {
 	probeTimeout := *timeout
 
 	httpServices := []discovery.ServiceConfig{
-		httpService("ipify", "https://api.ipify.org", probeTimeout, ""),
-		httpService("httpbin", "https://httpbin.org/ip", probeTimeout, "origin"),
-		httpService("icanhazip", "https://icanhazip.com", probeTimeout, ""),
-		httpService("jsonip", "https://jsonip.com", probeTimeout, "ip"),
-		httpService("ipecho", "http://ipecho.net/plain", probeTimeout, ""),
-		httpService("myip", "https://api.myip.com", probeTimeout, "ip"),
+		httpService("ipify", "https://api.ipify.org", "", "", probeTimeout),
+		httpService("httpbin", "https://httpbin.org/ip", "", "origin", probeTimeout),
+		httpService("icanhazip", "https://icanhazip.com", "", "", probeTimeout),
+		httpService("jsonip", "https://jsonip.com", "", "ip", probeTimeout),
+		httpService("ipecho", "http://ipecho.net/plain", "", "", probeTimeout),
+		httpService("myip", "https://api.myip.com", "", "ip", probeTimeout),
 
-		httpService("icanhazip-ipv4", "https://ipv4.icanhazip.com", probeTimeout, ""),
-		httpService("seeip-ipv4", "https://ipv4.seeip.org", probeTimeout, ""),
+		httpService("icanhazip-ipv4", "https://ipv4.icanhazip.com", "IPv4", "", probeTimeout),
+		httpService("seeip-ipv4", "https://ipv4.seeip.org", "IPv4", "", probeTimeout),
 
-		httpService("ipify-v6", "https://api6.ipify.org", probeTimeout, ""),
-		httpService("icanhazip-ipv6", "https://ipv6.icanhazip.com", probeTimeout, ""),
-		httpService("seeip-ipv6", "https://ipv6.seeip.org", probeTimeout, ""),
+		httpService("ipify-v6", "https://api6.ipify.org", "IPv6", "", probeTimeout),
+		httpService("icanhazip-ipv6", "https://ipv6.icanhazip.com", "IPv6", "", probeTimeout),
+		httpService("seeip-ipv6", "https://ipv6.seeip.org", "IPv6", "", probeTimeout),
 	}
 
 	udpServices := []discovery.ServiceConfig{
-		stunService("stun-google-v4", "stun.l.google.com:19302", probeTimeout, protocolUDPSTUN),
-		stunService("stun-cloudflare-v4", "stun.cloudflare.com:3478", probeTimeout, protocolUDPSTUN),
+		stunService("stun-google-v4", "stun.l.google.com:19302", "UDP-STUN", probeTimeout),
+		stunService("stun-cloudflare-v4", "stun.cloudflare.com:3478", "UDP-STUN", probeTimeout),
 
-		stunService("stun-google-v6", "stun.l.google.com:19302", probeTimeout, protocolUDPSTUN6),
-		stunService("stun-cloudflare-v6", "stun.cloudflare.com:3478", probeTimeout, protocolUDPSTUN6),
+		stunService("stun-google-v6", "stun.l.google.com:19302", "UDP-STUN6", probeTimeout),
+		stunService("stun-cloudflare-v6", "stun.cloudflare.com:3478", "UDP-STUN6", probeTimeout),
 	}
 
 	engine := discovery.NewEngine(httpServices, udpServices)
@@ -119,27 +107,26 @@ func runUpdate() {
 	fmt.Printf("Updated to %s\n", info.LatestVersion)
 }
 
-func httpService(name, url string, timeout time.Duration, extractField string) discovery.ServiceConfig {
-	service := discovery.ServiceConfig{
+func httpService(name, url, family, extractField string, timeout time.Duration) discovery.ServiceConfig {
+	cfg := discovery.ServiceConfig{
 		Name:     name,
 		URL:      url,
-		Protocol: string(protocolHTTP),
+		Protocol: "HTTP",
+		Family:   family,
 		Timeout:  timeout,
 	}
-
 	if extractField != "" {
-		service.ExtractMethod = string(extractJSON)
-		service.ExtractField = extractField
+		cfg.ExtractMethod = "json"
+		cfg.ExtractField = extractField
 	}
-
-	return service
+	return cfg
 }
 
-func stunService(name, url string, timeout time.Duration, protocol serviceProtocol) discovery.ServiceConfig {
+func stunService(name, url, protocol string, timeout time.Duration) discovery.ServiceConfig {
 	return discovery.ServiceConfig{
 		Name:     name,
 		URL:      url,
-		Protocol: string(protocol),
+		Protocol: protocol,
 		Timeout:  timeout,
 	}
 }
