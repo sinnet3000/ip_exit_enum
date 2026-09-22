@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"testing"
+
+	"ip_exit_enum/internal/ui"
 )
 
 func TestCalculateConfidence(t *testing.T) {
@@ -37,6 +39,28 @@ func TestCalculateConfidence(t *testing.T) {
 	}
 	if consensus != "Strong Consensus" {
 		t.Fatalf("expected Strong Consensus, got %s", consensus)
+	}
+
+	// Case 4: Weak Consensus (dominance in [0.6, 0.8))
+	e.familyIPs["IPv4"] = map[string]int{"203.0.113.1": 7, "203.0.113.2": 3}
+	_, consensus = e.CalculateConfidence()
+	if consensus != "Weak Consensus (IPv4)" {
+		t.Fatalf("expected Weak Consensus (IPv4), got %s", consensus)
+	}
+
+	// Case 5: Multiple Mappings (dominance < 0.6)
+	e.familyIPs["IPv4"] = map[string]int{"203.0.113.1": 5, "203.0.113.2": 5}
+	_, consensus = e.CalculateConfidence()
+	if consensus != "Multiple Mappings (IPv4)" {
+		t.Fatalf("expected Multiple Mappings (IPv4), got %s", consensus)
+	}
+}
+
+func TestRankIPs(t *testing.T) {
+	counts := map[string]int{"203.0.113.1": 1, "203.0.113.2": 3}
+	ranked := ui.RankIPs(counts)
+	if len(ranked) != 2 || ranked[0].IP != "203.0.113.2" || ranked[0].Hits != 3 || ranked[0].Percentage != 75.0 {
+		t.Fatalf("unexpected ranking output: %v", ranked)
 	}
 }
 
