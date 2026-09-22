@@ -31,6 +31,10 @@ func main() {
 	verbose := flag.Bool("v", false, "Verbose output")
 	showVersion := flag.Bool("version", false, "Show version and exit")
 	doUpdate := flag.Bool("update", false, "Update to the latest version")
+	samples := flag.Int("samples", 3, "Number of probe samples")
+	interval := flag.Duration("interval", 300*time.Millisecond, "Interval between samples")
+	timeout := flag.Duration("timeout", serviceTimeout, "Per-probe timeout")
+	jsonOutput := flag.Bool("json", false, "Output results as JSON")
 	flag.Parse()
 
 	if *showVersion {
@@ -43,32 +47,40 @@ func main() {
 		return
 	}
 
+	probeTimeout := *timeout
+
 	httpServices := []discovery.ServiceConfig{
-		httpService("ipify", "https://api.ipify.org", serviceTimeout, ""),
-		httpService("httpbin", "https://httpbin.org/ip", serviceTimeout, "origin"),
-		httpService("icanhazip", "https://icanhazip.com", serviceTimeout, ""),
-		httpService("jsonip", "https://jsonip.com", serviceTimeout, "ip"),
-		httpService("ipecho", "http://ipecho.net/plain", serviceTimeout, ""),
-		httpService("myip", "https://api.myip.com", serviceTimeout, "ip"),
+		httpService("ipify", "https://api.ipify.org", probeTimeout, ""),
+		httpService("httpbin", "https://httpbin.org/ip", probeTimeout, "origin"),
+		httpService("icanhazip", "https://icanhazip.com", probeTimeout, ""),
+		httpService("jsonip", "https://jsonip.com", probeTimeout, "ip"),
+		httpService("ipecho", "http://ipecho.net/plain", probeTimeout, ""),
+		httpService("myip", "https://api.myip.com", probeTimeout, "ip"),
 
-		httpService("icanhazip-ipv4", "https://ipv4.icanhazip.com", serviceTimeout, ""),
-		httpService("seeip-ipv4", "https://ipv4.seeip.org", serviceTimeout, ""),
+		httpService("icanhazip-ipv4", "https://ipv4.icanhazip.com", probeTimeout, ""),
+		httpService("seeip-ipv4", "https://ipv4.seeip.org", probeTimeout, ""),
 
-		httpService("ipify-v6", "https://api6.ipify.org", serviceTimeout, ""),
-		httpService("icanhazip-ipv6", "https://ipv6.icanhazip.com", serviceTimeout, ""),
-		httpService("seeip-ipv6", "https://ipv6.seeip.org", serviceTimeout, ""),
+		httpService("ipify-v6", "https://api6.ipify.org", probeTimeout, ""),
+		httpService("icanhazip-ipv6", "https://ipv6.icanhazip.com", probeTimeout, ""),
+		httpService("seeip-ipv6", "https://ipv6.seeip.org", probeTimeout, ""),
 	}
 
 	udpServices := []discovery.ServiceConfig{
-		stunService("stun-google-v4", "stun.l.google.com:19302", serviceTimeout, protocolUDPSTUN),
-		stunService("stun-cloudflare-v4", "stun.cloudflare.com:3478", serviceTimeout, protocolUDPSTUN),
+		stunService("stun-google-v4", "stun.l.google.com:19302", probeTimeout, protocolUDPSTUN),
+		stunService("stun-cloudflare-v4", "stun.cloudflare.com:3478", probeTimeout, protocolUDPSTUN),
 
-		stunService("stun-google-v6", "stun.l.google.com:19302", serviceTimeout, protocolUDPSTUN6),
-		stunService("stun-cloudflare-v6", "stun.cloudflare.com:3478", serviceTimeout, protocolUDPSTUN6),
+		stunService("stun-google-v6", "stun.l.google.com:19302", probeTimeout, protocolUDPSTUN6),
+		stunService("stun-cloudflare-v6", "stun.cloudflare.com:3478", probeTimeout, protocolUDPSTUN6),
 	}
 
 	engine := discovery.NewEngine(httpServices, udpServices)
-	engine.Run(context.Background(), *verbose)
+	engine.RunWithOptions(context.Background(), discovery.RunOptions{
+		Verbose:  *verbose,
+		JSON:     *jsonOutput,
+		Samples:  *samples,
+		Interval: *interval,
+		Timeout:  probeTimeout,
+	})
 }
 
 func runUpdate() {

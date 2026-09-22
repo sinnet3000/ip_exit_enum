@@ -47,7 +47,7 @@ func newHTTPClient(family string, timeout time.Duration) *http.Client {
 }
 
 var ipv4Regex = regexp.MustCompile(`\b\d{1,3}(?:\.\d{1,3}){3}\b`)
-var ipv6Regex = regexp.MustCompile(`\b[0-9a-fA-F:]*:[0-9a-fA-F:]*\b`)
+var ipv6Regex = regexp.MustCompile(`(?i)\b(?:[0-9a-f]{1,4}:)*[0-9a-f]{1,4}::(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4})*)?\b|\b::(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4})*)?\b|\b(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}\b`)
 
 func extractIPs(content string) []string {
 	var valid []string
@@ -123,7 +123,20 @@ func TestHTTPService(ctx context.Context, service ServiceConfig, attempt int) Te
 	}
 	defer resp.Body.Close()
 
-	bodyBytes, err := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return TestResult{
+			Service:   service.Name,
+			Protocol:  service.Protocol,
+			Timestamp: start,
+			Attempt:   attempt,
+			Success:   false,
+			Error:     fmt.Errorf("unexpected HTTP status: %s", resp.Status),
+			Latency:   time.Since(start),
+		}
+	}
+
+	const maxBodySize = 64 * 1024
+	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxBodySize))
 	if err != nil {
 		return TestResult{
 			Service:   service.Name,

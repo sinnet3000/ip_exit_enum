@@ -76,7 +76,6 @@ func TestSTUNService(ctx context.Context, service ServiceConfig, attempt int) Te
 	message := stun.MustBuild(stun.TransactionID, stun.BindingRequest)
 
 	var xorAddr stun.XORMappedAddress
-	var otherAddr stun.OtherAddress
 	var mappedAddr stun.MappedAddress
 	var eventErr error
 
@@ -87,11 +86,6 @@ func TestSTUNService(ctx context.Context, service ServiceConfig, attempt int) Te
 		}
 
 		if getErr := xorAddr.GetFrom(res.Message); getErr == nil {
-			return
-		}
-		if getErr := otherAddr.GetFrom(res.Message); getErr == nil {
-			xorAddr.IP = otherAddr.IP
-			xorAddr.Port = otherAddr.Port
 			return
 		}
 		if getErr := mappedAddr.GetFrom(res.Message); getErr == nil {

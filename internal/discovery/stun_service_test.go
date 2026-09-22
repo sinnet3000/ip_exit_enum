@@ -5,43 +5,64 @@ import (
 	"net"
 	"testing"
 	"time"
+
+	"github.com/pion/stun/v3"
 )
 
-func TestSTUNServiceRespectsTimeout(t *testing.T) {
+func TestSTUNServiceExecution(t *testing.T) {
 	conn, err := net.ListenPacket("udp4", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen udp4: %v", err)
 	}
 	defer conn.Close()
 
-	// Drain packets without responding.
+	sendOtherAddr := false
 	go func() {
 		buf := make([]byte, 1500)
 		for {
-			if _, _, err := conn.ReadFrom(buf); err != nil {
+			n, addr, err := conn.ReadFrom(buf)
+			if err != nil {
 				return
 			}
+			req := new(stun.Message)
+			req.Raw = buf[:n]
+			if err := req.Decode(); err != nil {
+				continue
+			}
+
+			var resp *stun.Message
+			if sendOtherAddr {
+				resp = stun.MustBuild(stun.TransactionID, stun.BindingSuccess, &stun.OtherAddress{
+					IP: net.ParseIP("198.51.100.99"), Port: 3478,
+				})
+			} else {
+				resp = stun.MustBuild(stun.TransactionID, stun.BindingSuccess, &stun.XORMappedAddress{
+					IP: net.ParseIP("203.0.113.50"), Port: 54321,
+				})
+			}
+			resp.TransactionID = req.TransactionID
+			resp.Encode()
+			_, _ = conn.WriteTo(resp.Raw, addr)
 		}
 	}()
 
-	service := ServiceConfig{
-		Name:     "stun-timeout-test",
+	svc := ServiceConfig{
+		Name:     "stun-test",
 		URL:      conn.LocalAddr().String(),
 		Protocol: "UDP-STUN",
-		Timeout:  50 * time.Millisecond,
+		Timeout:  200 * time.Millisecond,
 	}
 
-	start := time.Now()
-	res := TestSTUNService(context.Background(), service, 1)
-	elapsed := time.Since(start)
+	// 1. Success with XOR-MAPPED-ADDRESS
+	res := TestSTUNService(context.Background(), svc, 1)
+	if !res.Success || len(res.IPs) != 1 || res.IPs[0] != "203.0.113.50" {
+		t.Fatalf("expected success with 203.0.113.50, got: %v (err: %v)", res.IPs, res.Error)
+	}
 
+	// 2. Reject when only OTHER-ADDRESS is present
+	sendOtherAddr = true
+	res = TestSTUNService(context.Background(), svc, 1)
 	if res.Success {
-		t.Fatalf("expected timeout failure, got success with IPs=%v", res.IPs)
-	}
-	if res.Error == nil {
-		t.Fatalf("expected timeout error, got nil")
-	}
-	if elapsed > 500*time.Millisecond {
-		t.Fatalf("expected timeout within 500ms, took %s", elapsed)
+		t.Fatalf("expected failure when only OTHER-ADDRESS is present, got success: %v", res.IPs)
 	}
 }

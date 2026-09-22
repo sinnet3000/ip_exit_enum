@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -16,26 +17,32 @@ const (
 	ColorFail             = "\033[91m"
 	ColorEnd              = "\033[0m"
 	ColorBold             = "\033[1m"
-	ColorUnderline        = "\033[4m"
 	ColorProgressComplete = "\033[42m"
-	ColorProgressPartial  = "\033[43m"
 	ColorProgressEmpty    = "\033[47m"
 )
 
 type Display struct {
+	mu        sync.Mutex
 	lastLines int
 }
 
+type ProtocolStat struct {
+	Succeeded int `json:"succeeded"`
+	Attempted int `json:"attempted"`
+}
+
 type ResultUpdate struct {
-	StartTime          time.Time
-	CurrentPhase       string
-	CompletedTests     int
-	TotalTests         int
-	IPs                map[string]int
-	IPFamilies         map[string]map[string]int
-	ConfidenceLevel    string
-	Consensus          string
-	LoadBalancingFound map[string]bool
+	StartTime              time.Time
+	CurrentPhase           string
+	CompletedTests         int
+	TotalTests             int
+	SuccessfulTests        int
+	ProtocolStats          map[string]ProtocolStat
+	IPs                    map[string]int
+	IPFamilies             map[string]map[string]int
+	ConfidenceLevel        string
+	Consensus              string
+	MultipleEgressObserved map[string]bool
 }
 
 func NewDisplay() *Display {
@@ -54,6 +61,9 @@ func (d *Display) ProgressBar(completed, total int, width int) string {
 	}
 
 	pct := float64(completed) / float64(total)
+	if pct > 1.0 {
+		pct = 1.0
+	}
 	filled := int(float64(width) * pct)
 
 	bar := ColorProgressComplete + strings.Repeat(" ", filled) + ColorEnd
@@ -103,6 +113,9 @@ func (d *Display) FormatIPList(ipCounts map[string]int) []string {
 }
 
 func (d *Display) RenderLiveResults(state ResultUpdate) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
 	d.ClearPrevious()
 	var lines []string
 
@@ -128,15 +141,15 @@ func (d *Display) RenderLiveResults(state ResultUpdate) {
 			lines = append(lines, fmt.Sprintf(" %s%s:%s", ColorBold, fam, ColorEnd))
 			lines = append(lines, d.FormatIPList(ips)...)
 
-			isBalanced := len(ips) > 1
+			hasMultiple := len(ips) > 1
 			summaryColor := ColorOKGreen
 			summaryIcon := "📍"
-			summaryText := "single egress IP"
+			summaryText := "single egress IP observed"
 
-			if isBalanced {
+			if hasMultiple {
 				summaryColor = ColorWarning
-				summaryIcon = "🔄"
-				summaryText = fmt.Sprintf("load balancing across %d IPs", len(ips))
+				summaryIcon = "⚠️"
+				summaryText = fmt.Sprintf("multiple egress mappings observed (%d IPs)", len(ips))
 			}
 
 			lines = append(lines, fmt.Sprintf("   %s%s %s: %s%s", summaryColor, summaryIcon, fam, summaryText, ColorEnd))
@@ -150,6 +163,27 @@ func (d *Display) RenderLiveResults(state ResultUpdate) {
 			confLine += fmt.Sprintf(" (%s)", state.Consensus)
 		}
 		lines = append(lines, confLine)
+
+		// Explicit confidence inputs: probe stats & protocol breakdown
+		if state.CompletedTests > 0 {
+			probePct := float64(state.SuccessfulTests) / float64(state.CompletedTests) * 100
+			probeDetail := fmt.Sprintf("   Probes: %d/%d succeeded (%.1f%%)", state.SuccessfulTests, state.CompletedTests, probePct)
+
+			if len(state.ProtocolStats) > 0 {
+				var protoParts []string
+				var protoKeys []string
+				for k := range state.ProtocolStats {
+					protoKeys = append(protoKeys, k)
+				}
+				sort.Strings(protoKeys)
+				for _, k := range protoKeys {
+					ps := state.ProtocolStats[k]
+					protoParts = append(protoParts, fmt.Sprintf("%s: %d/%d", k, ps.Succeeded, ps.Attempted))
+				}
+				probeDetail += fmt.Sprintf(" | %s", strings.Join(protoParts, ", "))
+			}
+			lines = append(lines, fmt.Sprintf("%s%s%s", ColorOKBlue, probeDetail, ColorEnd))
+		}
 		lines = append(lines, "")
 	} else {
 		lines = append(lines, fmt.Sprintf("%s⏳ Discovering IPs...%s", ColorWarning, ColorEnd))
