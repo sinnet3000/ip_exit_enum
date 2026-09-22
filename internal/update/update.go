@@ -25,11 +25,6 @@ const (
 	binaryName   = "ip_exit_enum"
 )
 
-type Version string
-type DownloadURL string
-type AssetName string
-type Checksum string
-
 type releaseResponse struct {
 	TagName string         `json:"tag_name"`
 	Assets  []releaseAsset `json:"assets"`
@@ -42,34 +37,34 @@ type releaseAsset struct {
 }
 
 type UpdateInfo struct {
-	CurrentVersion Version
-	LatestVersion  Version
-	DownloadURL    DownloadURL
-	AssetName      AssetName
+	CurrentVersion string
+	LatestVersion  string
+	DownloadURL    string
+	AssetName      string
 	Size           int64
-	Checksum       Checksum
+	Checksum       string
 }
 
 func CheckForUpdate() (*UpdateInfo, error) {
-	currentVersion := Version(strings.TrimPrefix(version.Version, "v"))
+	currentVersion := strings.TrimPrefix(version.Version, "v")
 
 	release, err := fetchLatestRelease()
 	if err != nil {
 		return nil, fmt.Errorf("check for updates: %w", err)
 	}
 
-	latestVersion := Version(strings.TrimPrefix(release.TagName, "v"))
+	latestVersion := strings.TrimPrefix(release.TagName, "v")
 
 	if !isNewer(latestVersion, currentVersion) {
 		return nil, nil
 	}
 
-	assetName := AssetName(fmt.Sprintf("%s_%s_%s_%s.tar.gz", binaryName, latestVersion, runtime.GOOS, runtime.GOARCH))
+	assetName := fmt.Sprintf("%s_%s_%s_%s.tar.gz", binaryName, latestVersion, runtime.GOOS, runtime.GOARCH)
 	var asset *releaseAsset
 	var checksumsAsset *releaseAsset
 	for i := range release.Assets {
 		a := &release.Assets[i]
-		if a.Name == string(assetName) {
+		if a.Name == assetName {
 			asset = a
 		}
 		if a.Name == "SHA256SUMS" {
@@ -81,16 +76,16 @@ func CheckForUpdate() (*UpdateInfo, error) {
 		return nil, fmt.Errorf("no release asset found for %s/%s", runtime.GOOS, runtime.GOARCH)
 	}
 
-	var checksum Checksum
+	var checksum string
 	if checksumsAsset != nil {
-		checksum, _ = fetchChecksumFromFile(checksumsAsset.BrowserDownloadURL, string(assetName))
+		checksum, _ = fetchChecksumFromFile(checksumsAsset.BrowserDownloadURL, assetName)
 	}
 
 	return &UpdateInfo{
-		CurrentVersion: Version(version.Version),
-		LatestVersion:  Version(release.TagName),
-		DownloadURL:    DownloadURL(asset.BrowserDownloadURL),
-		AssetName:      AssetName(asset.Name),
+		CurrentVersion: version.Version,
+		LatestVersion:  release.TagName,
+		DownloadURL:    asset.BrowserDownloadURL,
+		AssetName:      asset.Name,
 		Size:           asset.Size,
 		Checksum:       checksum,
 	}, nil
@@ -107,16 +102,16 @@ func PerformUpdate(info *UpdateInfo) error {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	archivePath := filepath.Join(tmpDir, string(info.AssetName))
+	archivePath := filepath.Join(tmpDir, info.AssetName)
 
 	fmt.Printf("Downloading %s...\n", info.AssetName)
-	checksum, err := downloadFile(string(info.DownloadURL), archivePath)
+	checksum, err := downloadFile(info.DownloadURL, archivePath)
 	if err != nil {
 		return fmt.Errorf("download: %w", err)
 	}
 
 	fmt.Print("Verifying checksum... ")
-	if !strings.EqualFold(checksum, string(info.Checksum)) {
+	if !strings.EqualFold(checksum, info.Checksum) {
 		fmt.Println("FAILED")
 		return fmt.Errorf("checksum mismatch: expected %s, got %s", info.Checksum, checksum)
 	}
@@ -313,7 +308,7 @@ func copyFile(src, dst string) error {
 	return out.Close()
 }
 
-func fetchChecksumFromFile(url, assetName string) (Checksum, error) {
+func fetchChecksumFromFile(url, assetName string) (string, error) {
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Get(url)
 	if err != nil {
@@ -334,16 +329,16 @@ func fetchChecksumFromFile(url, assetName string) (Checksum, error) {
 	for _, line := range strings.Split(string(body), "\n") {
 		if strings.Contains(line, assetName) {
 			if match := re.FindString(line); match != "" {
-				return Checksum(strings.ToLower(match)), nil
+				return strings.ToLower(match), nil
 			}
 		}
 	}
 	return "", nil
 }
 
-func isNewer(v1, v2 Version) bool {
-	v1s := strings.TrimPrefix(string(v1), "v")
-	v2s := strings.TrimPrefix(string(v2), "v")
+func isNewer(v1, v2 string) bool {
+	v1s := strings.TrimPrefix(v1, "v")
+	v2s := strings.TrimPrefix(v2, "v")
 
 	// Dev builds always have an update available
 	if !isSemver(v2s) {

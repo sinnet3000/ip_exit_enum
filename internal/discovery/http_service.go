@@ -12,41 +12,43 @@ import (
 	"time"
 )
 
-func newHTTPClient(family string, timeout time.Duration) *http.Client {
-	dialTimeout := 5 * time.Second
-	clientTimeout := 10 * time.Second
-	if timeout > 0 {
-		dialTimeout = timeout
-		clientTimeout = timeout
+var (
+	httpDialer = &net.Dialer{KeepAlive: 30 * time.Second}
+
+	clientDual = &http.Client{
+		Transport: &http.Transport{DisableKeepAlives: true},
+	}
+	clientIPv4 = &http.Client{
+		Transport: &http.Transport{
+			DisableKeepAlives: true,
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				return httpDialer.DialContext(ctx, "tcp4", addr)
+			},
+		},
+	}
+	clientIPv6 = &http.Client{
+		Transport: &http.Transport{
+			DisableKeepAlives: true,
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				return httpDialer.DialContext(ctx, "tcp6", addr)
+			},
+		},
 	}
 
-	transport := &http.Transport{
-		DisableKeepAlives: true,
-	}
+	ipv4Regex = regexp.MustCompile(`\b\d{1,3}(?:\.\d{1,3}){3}\b`)
+	ipv6Regex = regexp.MustCompile(`(?i)\b(?:[0-9a-f]{1,4}:)*[0-9a-f]{1,4}::(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4})*)?\b|\b::(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4})*)?\b|\b(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}\b`)
+)
 
-	dialer := &net.Dialer{
-		Timeout:   dialTimeout,
-		KeepAlive: 30 * time.Second,
-	}
-
-	if family == "IPv4" {
-		transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-			return dialer.DialContext(ctx, "tcp4", addr)
-		}
-	} else if family == "IPv6" {
-		transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-			return dialer.DialContext(ctx, "tcp6", addr)
-		}
-	}
-
-	return &http.Client{
-		Transport: transport,
-		Timeout:   clientTimeout,
+func getHTTPClient(family string) *http.Client {
+	switch family {
+	case "IPv4":
+		return clientIPv4
+	case "IPv6":
+		return clientIPv6
+	default:
+		return clientDual
 	}
 }
-
-var ipv4Regex = regexp.MustCompile(`\b\d{1,3}(?:\.\d{1,3}){3}\b`)
-var ipv6Regex = regexp.MustCompile(`(?i)\b(?:[0-9a-f]{1,4}:)*[0-9a-f]{1,4}::(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4})*)?\b|\b::(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4})*)?\b|\b(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}\b`)
 
 func extractIPs(content string) []string {
 	var valid []string
@@ -78,22 +80,7 @@ func extractIPs(content string) []string {
 func TestHTTPService(ctx context.Context, service ServiceConfig, attempt int) TestResult {
 	start := time.Now()
 
-	reqCtx := ctx
-	if service.Timeout > 0 {
-		var cancel context.CancelFunc
-		reqCtx, cancel = context.WithTimeout(ctx, service.Timeout)
-		defer cancel()
-	}
-
-	family := service.Family
-	if family == "" {
-		family = "dual"
-	}
-
-	client := newHTTPClient(family, service.Timeout)
-
-	req, err := http.NewRequestWithContext(reqCtx, "GET", service.URL, nil)
-	if err != nil {
+	fail := func(err error) TestResult {
 		lat := time.Since(start)
 		return TestResult{
 			Service:   service.Name,
@@ -102,55 +89,42 @@ func TestHTTPService(ctx context.Context, service ServiceConfig, attempt int) Te
 			Attempt:   attempt,
 			Success:   false,
 			Error:     err,
-			ErrorMsg:  err.Error(),
 			Latency:   lat,
 			LatencyMs: float64(lat.Milliseconds()),
 		}
 	}
 
+	timeout := service.Timeout
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	client := getHTTPClient(service.Family)
+
+	req, err := http.NewRequestWithContext(reqCtx, "GET", service.URL, nil)
+	if err != nil {
+		return fail(err)
+	}
+
 	resp, err := client.Do(req)
 	if err != nil {
-		return TestResult{
-			Service:   service.Name,
-			Protocol:  service.Protocol,
-			Timestamp: start,
-			Attempt:   attempt,
-			Success:   false,
-			Error:     err,
-			Latency:   time.Since(start),
-		}
+		return fail(err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return TestResult{
-			Service:   service.Name,
-			Protocol:  service.Protocol,
-			Timestamp: start,
-			Attempt:   attempt,
-			Success:   false,
-			Error:     fmt.Errorf("unexpected HTTP status: %s", resp.Status),
-			Latency:   time.Since(start),
-		}
+		return fail(fmt.Errorf("unexpected HTTP status: %s", resp.Status))
 	}
 
 	const maxBodySize = 64 * 1024
 	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxBodySize))
 	if err != nil {
-		return TestResult{
-			Service:   service.Name,
-			Protocol:  service.Protocol,
-			Timestamp: start,
-			Attempt:   attempt,
-			Success:   false,
-			Error:     err,
-			Latency:   time.Since(start),
-		}
+		return fail(err)
 	}
 
-	bodyStr := string(bodyBytes)
-	var contentToScan string
-
+	contentToScan := string(bodyBytes)
 	if service.ExtractMethod == "json" && service.ExtractField != "" {
 		var payload map[string]interface{}
 		if err := json.Unmarshal(bodyBytes, &payload); err == nil {
@@ -158,12 +132,10 @@ func TestHTTPService(ctx context.Context, service ServiceConfig, attempt int) Te
 				contentToScan = fmt.Sprintf("%v", val)
 			}
 		}
-	} else {
-		contentToScan = bodyStr
 	}
 
 	ips := extractIPs(contentToScan)
-
+	lat := time.Since(start)
 	return TestResult{
 		Service:   service.Name,
 		Protocol:  service.Protocol,
@@ -171,6 +143,7 @@ func TestHTTPService(ctx context.Context, service ServiceConfig, attempt int) Te
 		Attempt:   attempt,
 		Success:   len(ips) > 0,
 		IPs:       ips,
-		Latency:   time.Since(start),
+		Latency:   lat,
+		LatencyMs: float64(lat.Milliseconds()),
 	}
 }

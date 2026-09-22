@@ -38,7 +38,6 @@ type ResultUpdate struct {
 	TotalTests             int
 	SuccessfulTests        int
 	ProtocolStats          map[string]ProtocolStat
-	IPs                    map[string]int
 	IPFamilies             map[string]map[string]int
 	ConfidenceLevel        string
 	Consensus              string

@@ -13,11 +13,26 @@ import (
 func TestSTUNService(ctx context.Context, service ServiceConfig, attempt int) TestResult {
 	start := time.Now()
 
-	if service.Timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, service.Timeout)
-		defer cancel()
+	fail := func(err error) TestResult {
+		lat := time.Since(start)
+		return TestResult{
+			Service:   service.Name,
+			Protocol:  service.Protocol,
+			Timestamp: start,
+			Attempt:   attempt,
+			Success:   false,
+			Error:     err,
+			Latency:   lat,
+			LatencyMs: float64(lat.Milliseconds()),
+		}
 	}
+
+	timeout := service.Timeout
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 
 	network := "udp"
 	if service.Protocol == "UDP-STUN6" {
@@ -26,50 +41,20 @@ func TestSTUNService(ctx context.Context, service ServiceConfig, attempt int) Te
 		network = "udp4"
 	}
 
-	dialer := net.Dialer{}
-	if service.Timeout > 0 {
-		dialer.Timeout = service.Timeout
-	}
-
-	conn, err := dialer.DialContext(ctx, network, service.URL)
+	udpDialer := net.Dialer{Timeout: timeout}
+	conn, err := udpDialer.DialContext(ctx, network, service.URL)
 	if err != nil {
-		return TestResult{
-			Service:   service.Name,
-			Protocol:  service.Protocol,
-			Timestamp: start,
-			Attempt:   attempt,
-			Success:   false,
-			Error:     fmt.Errorf("stun dial failed: %w", err),
-			Latency:   time.Since(start),
-		}
+		return fail(fmt.Errorf("stun dial failed: %w", err))
 	}
-	if service.Timeout > 0 {
-		if err := conn.SetDeadline(time.Now().Add(service.Timeout)); err != nil {
-			conn.Close()
-			return TestResult{
-				Service:   service.Name,
-				Protocol:  service.Protocol,
-				Timestamp: start,
-				Attempt:   attempt,
-				Success:   false,
-				Error:     fmt.Errorf("stun set deadline failed: %w", err),
-				Latency:   time.Since(start),
-			}
-		}
+	defer conn.Close()
+
+	if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
+		return fail(fmt.Errorf("stun set deadline failed: %w", err))
 	}
 
 	c, err := stun.NewClient(conn)
 	if err != nil {
-		conn.Close()
-		return TestResult{
-			Service:   service.Name,
-			Protocol:  service.Protocol,
-			Timestamp: start,
-			Attempt:   attempt,
-			Success:   false,
-			Error:     fmt.Errorf("stun client init failed: %w", err),
-			Latency:   time.Since(start),
-		}
+		return fail(fmt.Errorf("stun client init failed: %w", err))
 	}
 	defer c.Close()
 
@@ -95,57 +80,22 @@ func TestSTUNService(ctx context.Context, service ServiceConfig, attempt int) Te
 		}
 	})
 
-	latency := time.Since(start)
-
 	if err != nil {
-		return TestResult{
-			Service:   service.Name,
-			Protocol:  service.Protocol,
-			Timestamp: start,
-			Attempt:   attempt,
-			Success:   false,
-			Error:     fmt.Errorf("stun request failed: %w", err),
-			Latency:   latency,
-		}
+		return fail(fmt.Errorf("stun request failed: %w", err))
 	}
-
 	if eventErr != nil {
-		return TestResult{
-			Service:   service.Name,
-			Protocol:  service.Protocol,
-			Timestamp: start,
-			Attempt:   attempt,
-			Success:   false,
-			Error:     fmt.Errorf("stun request failed: %w", eventErr),
-			Latency:   latency,
-		}
+		return fail(fmt.Errorf("stun request failed: %w", eventErr))
 	}
-
 	if xorAddr.IP == nil {
-		return TestResult{
-			Service:   service.Name,
-			Protocol:  service.Protocol,
-			Timestamp: start,
-			Attempt:   attempt,
-			Success:   false,
-			Error:     fmt.Errorf("no IP address attribute in STUN response"),
-			Latency:   latency,
-		}
+		return fail(fmt.Errorf("no IP address attribute in STUN response"))
 	}
 
 	addr, ok := netip.AddrFromSlice(xorAddr.IP)
 	if !ok || !addr.IsGlobalUnicast() {
-		return TestResult{
-			Service:   service.Name,
-			Protocol:  service.Protocol,
-			Timestamp: start,
-			Attempt:   attempt,
-			Success:   false,
-			Error:     fmt.Errorf("stun returned non-public IP: %s", xorAddr.IP.String()),
-			Latency:   latency,
-		}
+		return fail(fmt.Errorf("stun returned non-public IP: %s", xorAddr.IP.String()))
 	}
 
+	lat := time.Since(start)
 	return TestResult{
 		Service:   service.Name,
 		Protocol:  service.Protocol,
@@ -153,6 +103,7 @@ func TestSTUNService(ctx context.Context, service ServiceConfig, attempt int) Te
 		Attempt:   attempt,
 		Success:   true,
 		IPs:       []string{xorAddr.IP.String()},
-		Latency:   latency,
+		Latency:   lat,
+		LatencyMs: float64(lat.Milliseconds()),
 	}
 }
