@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand"
 	"net"
@@ -207,8 +208,11 @@ func (e *Engine) runBatch(ctx context.Context, services []ServiceConfig, tester 
 			res := tester(ctx, s, attempt)
 
 			if !res.Success && attempt == 1 && res.Error != nil {
+				var netErr net.Error
+				isTimeout := errors.Is(res.Error, context.DeadlineExceeded) ||
+					(errors.As(res.Error, &netErr) && netErr.Timeout())
 				errStr := res.Error.Error()
-				if strings.Contains(errStr, "deadline exceeded") || strings.Contains(errStr, "connection refused") || strings.Contains(errStr, "no route to host") {
+				if isTimeout || strings.Contains(errStr, "connection refused") || strings.Contains(errStr, "no route to host") || strings.Contains(errStr, "timeout") {
 					e.mu.Lock()
 					e.deadServices[s.Name] = res.Error
 					e.mu.Unlock()

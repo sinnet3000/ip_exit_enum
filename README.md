@@ -104,8 +104,12 @@ ip_exit_enum -v
 ### Other Flags
 
 ```sh
-ip_exit_enum -version   # Show version
-ip_exit_enum -update    # Self-update to latest release
+ip_exit_enum -samples 5           # Configure number of probe samples (default: 3)
+ip_exit_enum -interval 500ms      # Set interval between samples (default: 300ms)
+ip_exit_enum -timeout 2s          # Set per-probe timeout (default: 5s)
+ip_exit_enum -json                # Output machine-readable JSON results
+ip_exit_enum -version             # Show version
+ip_exit_enum -update              # Self-update to latest release
 ```
 
 ---
