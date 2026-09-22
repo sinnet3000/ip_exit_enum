@@ -142,7 +142,7 @@ func probeService(ctx context.Context, s ServiceConfig, attempt int) TestResult 
 
 func (e *Engine) runBatch(ctx context.Context, services []ServiceConfig, tester TesterFunc, attempt int, jsonMode bool) {
 	var wg sync.WaitGroup
-	semaphore := make(chan struct{}, 12)
+	semaphore := make(chan struct{}, 16)
 
 	for _, svc := range services {
 		if ctx.Err() != nil {

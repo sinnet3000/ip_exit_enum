@@ -39,7 +39,7 @@
 - UI rendering under lock can serialize updates if stdout is slow.
 
 ## Concurrency model
-- `Engine.runBatch` uses a bounded worker pool (12 goroutines) per sample.
+- `Engine.runBatch` uses a bounded worker pool (16 goroutines) per sample.
 - Shared state is protected by a mutex; UI updates occur after each result.
 
 ## Testing
