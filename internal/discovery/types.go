@@ -17,16 +17,15 @@ type ServiceConfig struct {
 }
 
 type TestResult struct {
-	Service   string        `json:"service"`
-	Protocol  string        `json:"protocol"`
-	Attempt   int           `json:"attempt"`
-	Success   bool          `json:"success"`
-	IPs       []string      `json:"ips,omitempty"`
-	Latency   time.Duration `json:"-"`
-	LatencyMs float64       `json:"latency_ms"`
-	Timestamp time.Time     `json:"timestamp"`
-	Error     error         `json:"-"`
-	ErrorMsg  string        `json:"error,omitempty"`
+	Service   string    `json:"service"`
+	Protocol  string    `json:"protocol"`
+	Attempt   int       `json:"attempt"`
+	Success   bool      `json:"success"`
+	IPs       []string  `json:"ips,omitempty"`
+	LatencyMs float64   `json:"latency_ms"`
+	Timestamp time.Time `json:"timestamp"`
+	Error     error     `json:"-"`
+	ErrorMsg  string    `json:"error,omitempty"`
 }
 
 type RunOptions struct {
@@ -37,12 +36,6 @@ type RunOptions struct {
 	Timeout  time.Duration
 }
 
-type JSONIPEntry struct {
-	IP         string  `json:"ip"`
-	Hits       int     `json:"hits"`
-	Percentage float64 `json:"percentage"`
-}
-
 type JSONOutput struct {
 	Timestamp       time.Time                  `json:"timestamp"`
 	DurationMs      float64                    `json:"duration_ms"`
@@ -51,6 +44,6 @@ type JSONOutput struct {
 	CompletedTests  int                        `json:"completed_tests"`
 	SuccessfulTests int                        `json:"successful_tests"`
 	ProtocolStats   map[string]ui.ProtocolStat `json:"protocol_stats"`
-	DiscoveredIPs   map[string][]JSONIPEntry   `json:"discovered_ips"`
+	DiscoveredIPs   map[string]map[string]int  `json:"discovered_ips"`
 	DetailedResults []TestResult               `json:"detailed_results,omitempty"`
 }

@@ -14,7 +14,6 @@ func TestSTUNService(ctx context.Context, service ServiceConfig, attempt int) Te
 	start := time.Now()
 
 	fail := func(err error) TestResult {
-		lat := time.Since(start)
 		return TestResult{
 			Service:   service.Name,
 			Protocol:  service.Protocol,
@@ -22,8 +21,7 @@ func TestSTUNService(ctx context.Context, service ServiceConfig, attempt int) Te
 			Attempt:   attempt,
 			Success:   false,
 			Error:     err,
-			Latency:   lat,
-			LatencyMs: float64(lat.Milliseconds()),
+			LatencyMs: float64(time.Since(start).Microseconds()) / 1000.0,
 		}
 	}
 
@@ -95,7 +93,6 @@ func TestSTUNService(ctx context.Context, service ServiceConfig, attempt int) Te
 		return fail(fmt.Errorf("stun returned non-public IP: %s", xorAddr.IP.String()))
 	}
 
-	lat := time.Since(start)
 	return TestResult{
 		Service:   service.Name,
 		Protocol:  service.Protocol,
@@ -103,7 +100,6 @@ func TestSTUNService(ctx context.Context, service ServiceConfig, attempt int) Te
 		Attempt:   attempt,
 		Success:   true,
 		IPs:       []string{xorAddr.IP.String()},
-		Latency:   lat,
-		LatencyMs: float64(lat.Milliseconds()),
+		LatencyMs: float64(time.Since(start).Microseconds()) / 1000.0,
 	}
 }

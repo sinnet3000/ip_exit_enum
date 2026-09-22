@@ -5,11 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/rand"
 	"net"
 	"os"
 	"os/signal"
-	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -48,15 +46,6 @@ func NewEngine(httpServices, udpServices []ServiceConfig) *Engine {
 		deadServices: make(map[string]error),
 		startTime:    time.Now(),
 	}
-}
-
-func (e *Engine) Run(ctx context.Context, verbose bool) {
-	e.RunWithOptions(ctx, RunOptions{
-		Verbose:  verbose,
-		Samples:  3,
-		Interval: 300 * time.Millisecond,
-		Timeout:  5 * time.Second,
-	})
 }
 
 func (e *Engine) RunWithOptions(ctx context.Context, opts RunOptions) {
@@ -148,11 +137,7 @@ func (e *Engine) runPhase(ctx context.Context, phaseName string, services []Serv
 		e.currentPhase = fmt.Sprintf("%s (sample %d/%d)", phaseName, attempt, samples)
 		e.mu.Unlock()
 
-		shuffled := make([]ServiceConfig, len(services))
-		copy(shuffled, services)
-		rand.Shuffle(len(shuffled), func(i, j int) { shuffled[i], shuffled[j] = shuffled[j], shuffled[i] })
-
-		e.runBatch(ctx, shuffled, tester, attempt, jsonMode)
+		e.runBatch(ctx, services, tester, attempt, jsonMode)
 
 		if ctx.Err() != nil {
 			break
@@ -218,9 +203,6 @@ func (e *Engine) runBatch(ctx context.Context, services []ServiceConfig, tester 
 }
 
 func (e *Engine) processResult(res TestResult, jsonMode bool) {
-	if res.LatencyMs == 0 && res.Latency > 0 {
-		res.LatencyMs = float64(res.Latency.Milliseconds())
-	}
 	if res.Error != nil && res.ErrorMsg == "" {
 		res.ErrorMsg = res.Error.Error()
 	}
@@ -234,8 +216,7 @@ func (e *Engine) processResult(res TestResult, jsonMode bool) {
 		e.testsSuccessful++
 		for _, ip := range res.IPs {
 			family := "IPv4"
-			parsedIP := net.ParseIP(ip)
-			if parsedIP != nil && parsedIP.To4() == nil {
+			if strings.Contains(ip, ":") {
 				family = "IPv6"
 			}
 			e.familyIPs[family][ip]++
@@ -290,24 +271,16 @@ func (e *Engine) getUpdateSnapshotLocked() ui.ResultUpdate {
 		familyIPs[fam] = copyCounts
 	}
 
-	multipleEgress := make(map[string]bool)
-	for fam, counts := range familyIPs {
-		if len(counts) > 1 {
-			multipleEgress[fam] = true
-		}
-	}
-
 	return ui.ResultUpdate{
-		StartTime:              e.startTime,
-		CurrentPhase:           e.currentPhase,
-		CompletedTests:         e.testsCompleted,
-		TotalTests:             e.testsTotal,
-		SuccessfulTests:        e.testsSuccessful,
-		ProtocolStats:          e.calcProtocolStatsLocked(),
-		IPFamilies:             familyIPs,
-		ConfidenceLevel:        confidence,
-		Consensus:              consensus,
-		MultipleEgressObserved: multipleEgress,
+		StartTime:       e.startTime,
+		CurrentPhase:    e.currentPhase,
+		CompletedTests:  e.testsCompleted,
+		TotalTests:      e.testsTotal,
+		SuccessfulTests: e.testsSuccessful,
+		ProtocolStats:   e.calcProtocolStatsLocked(),
+		IPFamilies:      familyIPs,
+		ConfidenceLevel: confidence,
+		Consensus:       consensus,
 	}
 }
 
@@ -349,11 +322,7 @@ func (e *Engine) CalculateConfidence() (string, string) {
 		dominance := float64(maxHits) / float64(totalFamHits)
 		if dominance < 0.8 && len(counts) > 1 {
 			isConsistent = false
-			if dominance < 0.6 {
-				consensusMsg = fmt.Sprintf("Multiple Mappings (%s)", fam)
-			} else {
-				consensusMsg = fmt.Sprintf("Weak Consensus (%s)", fam)
-			}
+			consensusMsg = fmt.Sprintf("Multiple Mappings (%s)", fam)
 		}
 	}
 
@@ -381,10 +350,6 @@ func (e *Engine) CalculateConfidence() (string, string) {
 		}
 	}
 
-	if !isConsistent {
-		label += " / " + consensusMsg
-	}
-
 	return label, consensusMsg
 }
 
@@ -395,30 +360,6 @@ func (e *Engine) outputJSON() {
 	confidence, consensus := e.CalculateConfidence()
 	durationMs := float64(time.Since(e.startTime).Milliseconds())
 
-	discoveredIPs := make(map[string][]JSONIPEntry)
-	for fam, counts := range e.familyIPs {
-		total := 0
-		for _, count := range counts {
-			total += count
-		}
-		var entries []JSONIPEntry
-		for ip, count := range counts {
-			pct := 0.0
-			if total > 0 {
-				pct = (float64(count) / float64(total)) * 100
-			}
-			entries = append(entries, JSONIPEntry{
-				IP:         ip,
-				Hits:       count,
-				Percentage: pct,
-			})
-		}
-		sort.Slice(entries, func(i, j int) bool {
-			return entries[i].Hits > entries[j].Hits
-		})
-		discoveredIPs[strings.ToLower(fam)] = entries
-	}
-
 	out := JSONOutput{
 		Timestamp:       e.startTime.UTC(),
 		DurationMs:      durationMs,
@@ -427,7 +368,7 @@ func (e *Engine) outputJSON() {
 		CompletedTests:  e.testsCompleted,
 		SuccessfulTests: e.testsSuccessful,
 		ProtocolStats:   e.calcProtocolStatsLocked(),
-		DiscoveredIPs:   discoveredIPs,
+		DiscoveredIPs:   e.familyIPs,
 		DetailedResults: e.results,
 	}
 

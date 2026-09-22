@@ -32,16 +32,15 @@ type ProtocolStat struct {
 }
 
 type ResultUpdate struct {
-	StartTime              time.Time
-	CurrentPhase           string
-	CompletedTests         int
-	TotalTests             int
-	SuccessfulTests        int
-	ProtocolStats          map[string]ProtocolStat
-	IPFamilies             map[string]map[string]int
-	ConfidenceLevel        string
-	Consensus              string
-	MultipleEgressObserved map[string]bool
+	StartTime       time.Time
+	CurrentPhase    string
+	CompletedTests  int
+	TotalTests      int
+	SuccessfulTests int
+	ProtocolStats   map[string]ProtocolStat
+	IPFamilies      map[string]map[string]int
+	ConfidenceLevel string
+	Consensus       string
 }
 
 func NewDisplay() *Display {

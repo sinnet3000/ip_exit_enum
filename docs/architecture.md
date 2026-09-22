@@ -5,7 +5,7 @@
 
 ## High-level flow
 1) `main.go` defines HTTP and STUN service lists with per-service timeouts.
-2) `discovery.Engine` runs multiple samples, shuffling service order each pass.
+2) `discovery.Engine` runs concurrent discovery phases (HTTP and STUN) across multiple samples.
 3) Each service probe yields a `TestResult` with success, IPs, and latency.
 4) Results are aggregated into maps by IP, protocol, and IP family.
 5) `ui.Display` renders live progress and confidence scoring; verbose output is optional.
@@ -39,7 +39,7 @@
 - UI rendering under lock can serialize updates if stdout is slow.
 
 ## Concurrency model
-- `Engine.runBatch` uses a bounded worker pool (4 goroutines) per sample.
+- `Engine.runBatch` uses a bounded worker pool (12 goroutines) per sample.
 - Shared state is protected by a mutex; UI updates occur after each result.
 
 ## Testing

@@ -81,7 +81,6 @@ func TestHTTPService(ctx context.Context, service ServiceConfig, attempt int) Te
 	start := time.Now()
 
 	fail := func(err error) TestResult {
-		lat := time.Since(start)
 		return TestResult{
 			Service:   service.Name,
 			Protocol:  service.Protocol,
@@ -89,8 +88,7 @@ func TestHTTPService(ctx context.Context, service ServiceConfig, attempt int) Te
 			Attempt:   attempt,
 			Success:   false,
 			Error:     err,
-			Latency:   lat,
-			LatencyMs: float64(lat.Milliseconds()),
+			LatencyMs: float64(time.Since(start).Microseconds()) / 1000.0,
 		}
 	}
 
@@ -135,7 +133,6 @@ func TestHTTPService(ctx context.Context, service ServiceConfig, attempt int) Te
 	}
 
 	ips := extractIPs(contentToScan)
-	lat := time.Since(start)
 	return TestResult{
 		Service:   service.Name,
 		Protocol:  service.Protocol,
@@ -143,7 +140,6 @@ func TestHTTPService(ctx context.Context, service ServiceConfig, attempt int) Te
 		Attempt:   attempt,
 		Success:   len(ips) > 0,
 		IPs:       ips,
-		Latency:   lat,
-		LatencyMs: float64(lat.Milliseconds()),
+		LatencyMs: float64(time.Since(start).Microseconds()) / 1000.0,
 	}
 }
