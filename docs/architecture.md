@@ -5,7 +5,7 @@
 
 ## High-level flow
 1) `main.go` defines HTTP and STUN service lists with per-service timeouts.
-2) `discovery.Engine` runs concurrent discovery phases (HTTP and STUN) across multiple samples.
+2) `discovery.Engine` runs concurrent probes across all HTTP and STUN services in unified sample passes.
 3) Each service probe yields a `TestResult` with success, IPs, and latency.
 4) Results are aggregated into maps by IP, protocol, and IP family.
 5) `ui.Display` renders live progress and confidence scoring; verbose output is optional.

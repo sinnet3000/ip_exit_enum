@@ -56,6 +56,7 @@ func (e *Engine) RunWithOptions(ctx context.Context, opts RunOptions) {
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigChan)
 	go func() {
 		<-sigChan
 		if !opts.JSON {
@@ -81,23 +82,28 @@ func (e *Engine) RunWithOptions(ctx context.Context, opts RunOptions) {
 		}
 	}
 
-	e.testsTotal = (len(e.httpServices) * samples) + (len(e.udpServices) * samples)
-	e.currentPhase = "Concurrent Discovery"
+	allServices := append(append([]ServiceConfig{}, e.httpServices...), e.udpServices...)
+	e.testsTotal = len(allServices) * samples
 
-	var wg sync.WaitGroup
-	wg.Add(2)
+	for attempt := 1; attempt <= samples; attempt++ {
+		if ctx.Err() != nil {
+			break
+		}
 
-	go func() {
-		defer wg.Done()
-		e.runPhase(ctx, "HTTP(S)", e.httpServices, TestHTTPService, samples, interval, opts.JSON)
-	}()
+		e.mu.Lock()
+		e.currentPhase = fmt.Sprintf("Discovery (sample %d/%d)", attempt, samples)
+		e.mu.Unlock()
 
-	go func() {
-		defer wg.Done()
-		e.runPhase(ctx, "UDP-STUN", e.udpServices, TestSTUNService, samples, interval, opts.JSON)
-	}()
+		e.runBatch(ctx, allServices, probeService, attempt, opts.JSON)
 
-	wg.Wait()
+		if ctx.Err() != nil {
+			break
+		}
+
+		if attempt < samples {
+			time.Sleep(interval)
+		}
+	}
 
 	if opts.JSON {
 		e.outputJSON()
@@ -127,26 +133,11 @@ func (e *Engine) RunWithOptions(ctx context.Context, opts RunOptions) {
 
 type TesterFunc func(context.Context, ServiceConfig, int) TestResult
 
-func (e *Engine) runPhase(ctx context.Context, phaseName string, services []ServiceConfig, tester TesterFunc, samples int, interval time.Duration, jsonMode bool) {
-	for attempt := 1; attempt <= samples; attempt++ {
-		if ctx.Err() != nil {
-			break
-		}
-
-		e.mu.Lock()
-		e.currentPhase = fmt.Sprintf("%s (sample %d/%d)", phaseName, attempt, samples)
-		e.mu.Unlock()
-
-		e.runBatch(ctx, services, tester, attempt, jsonMode)
-
-		if ctx.Err() != nil {
-			break
-		}
-
-		if attempt < samples {
-			time.Sleep(interval)
-		}
+func probeService(ctx context.Context, s ServiceConfig, attempt int) TestResult {
+	if s.Protocol == "HTTP" {
+		return TestHTTPService(ctx, s, attempt)
 	}
+	return TestSTUNService(ctx, s, attempt)
 }
 
 func (e *Engine) runBatch(ctx context.Context, services []ServiceConfig, tester TesterFunc, attempt int, jsonMode bool) {

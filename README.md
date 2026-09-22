@@ -50,21 +50,22 @@ Example TUI output (illustrative) highlighting two discovered IPv4 exits and one
 
 ```text
 🔍 IP Exit Discovery – Live Results
-Phase: HTTP(S) Discovery – sample 2/3 | Elapsed: 4.8s
+Phase: Discovery (sample 2/3) | Elapsed: 1.2s
 
-Overall Progress: [██████████████            ] 18/30 (60.0%)
+Overall Progress: [████████████████████                    ] 20/30 (66.7%)
 
 📊 IPs Discovered:
  IPv4:
    ✓ 198.51.100.10                           (3 hits, 60.0%)
    ✓ 203.0.113.7                             (2 hits, 40.0%)
-   🔄 IPv4: load balancing across 2 IPs
+   ⚠️ IPv4: multiple egress mappings observed (2 IPs)
 
  IPv6:
-   ✓ 2001:db8::1                             (4 hits, 100.0%)
-   📍 IPv6: single egress IP
+   ✓ 2001:db8::1                             (5 hits, 100.0%)
+   📍 IPv6: single egress IP observed
 
-📈 Confidence: High (Strong Consensus)
+📈 Confidence: Medium (Weak Consensus (IPv4))
+   Probes: 15/20 succeeded (75.0%) | HTTP: 10/14, UDP-STUN: 5/6
 ```
 
 ---

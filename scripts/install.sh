@@ -100,12 +100,15 @@ main() {
     info "Extracting..."
     tar -xzf "$tmpdir/release.tar.gz" -C "$tmpdir"
 
+    local bin="${BINARY_NAME}"
+    [ "$os" = "windows" ] && bin="${BINARY_NAME}.exe"
+
     if [ -w "$install_dir" ]; then
-        mv "$tmpdir/${BINARY_NAME}" "$install_dir/"
+        mv "$tmpdir/$bin" "$install_dir/"
     else
-        sudo mv "$tmpdir/${BINARY_NAME}" "$install_dir/"
+        sudo mv "$tmpdir/$bin" "$install_dir/"
     fi
-    chmod +x "$install_dir/${BINARY_NAME}"
+    chmod +x "$install_dir/$bin"
 
     if [ "$os" = "darwin" ]; then
         codesign -s - "$install_dir/${BINARY_NAME}" 2>/dev/null || true
