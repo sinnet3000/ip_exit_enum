@@ -12,46 +12,33 @@ func TestCalculateConfidence(t *testing.T) {
 	e := NewEngine(nil, nil)
 
 	// Case 1: No completed tests
-	label, consensus := e.CalculateConfidence()
-	if label != "Unknown" {
+	if label, _ := e.CalculateConfidence(); label != "Unknown" {
 		t.Fatalf("expected Unknown label, got %s", label)
 	}
 
 	// Case 2: Low success rate (1/10)
-	e.testsCompleted = 10
-	e.testsSuccessful = 1
-	label, _ = e.CalculateConfidence()
-	if label != "Low" {
-		t.Fatalf("expected Low for 10%% success rate, got %s", label)
+	e.testsCompleted, e.testsSuccessful = 10, 1
+	if label, _ := e.CalculateConfidence(); label != "Low" {
+		t.Fatalf("expected Low, got %s", label)
 	}
 
 	// Case 3: High success rate with single IP
-	e.testsCompleted = 10
 	e.testsSuccessful = 9
-	e.results = []TestResult{
-		{Protocol: "HTTP", Success: true},
-		{Protocol: "UDP-STUN", Success: true},
-	}
+	e.results = []TestResult{{Protocol: "HTTP", Success: true}, {Protocol: "UDP-STUN", Success: true}}
 	e.familyIPs["IPv4"]["203.0.113.1"] = 9
-	label, consensus = e.CalculateConfidence()
-	if label != "High" && label != "Very High" {
-		t.Fatalf("expected High or Very High, got %s", label)
-	}
-	if consensus != "Strong Consensus" {
-		t.Fatalf("expected Strong Consensus, got %s", consensus)
+	if label, consensus := e.CalculateConfidence(); (label != "High" && label != "Very High") || consensus != "Strong Consensus" {
+		t.Fatalf("expected High/Very High and Strong Consensus, got %s / %s", label, consensus)
 	}
 
 	// Case 4: Weak Consensus (dominance in [0.6, 0.8))
 	e.familyIPs["IPv4"] = map[string]int{"203.0.113.1": 7, "203.0.113.2": 3}
-	_, consensus = e.CalculateConfidence()
-	if consensus != "Weak Consensus (IPv4)" {
+	if _, consensus := e.CalculateConfidence(); consensus != "Weak Consensus (IPv4)" {
 		t.Fatalf("expected Weak Consensus (IPv4), got %s", consensus)
 	}
 
 	// Case 5: Multiple Mappings (dominance < 0.6)
 	e.familyIPs["IPv4"] = map[string]int{"203.0.113.1": 5, "203.0.113.2": 5}
-	_, consensus = e.CalculateConfidence()
-	if consensus != "Multiple Mappings (IPv4)" {
+	if _, consensus := e.CalculateConfidence(); consensus != "Multiple Mappings (IPv4)" {
 		t.Fatalf("expected Multiple Mappings (IPv4), got %s", consensus)
 	}
 }
@@ -75,14 +62,9 @@ func TestCircuitBreakerSkipsDeadService(t *testing.T) {
 	}
 
 	svcs := []ServiceConfig{{Name: "dead-service", Protocol: "HTTP"}}
-
-	// Attempt 2 should skip invoking the tester func
 	e.runBatch(context.Background(), svcs, dummyTester, 2, true)
 
-	if callCount != 0 {
-		t.Fatalf("expected tester to be skipped on attempt 2, called %d times", callCount)
-	}
-	if len(e.results) != 1 || e.results[0].Success {
-		t.Fatalf("expected skipped failed result recorded, got: %v", e.results)
+	if callCount != 0 || len(e.results) != 1 || e.results[0].Success {
+		t.Fatalf("expected tester to be skipped on attempt 2, called %d times (results=%v)", callCount, e.results)
 	}
 }

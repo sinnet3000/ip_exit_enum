@@ -4,45 +4,24 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 	"time"
 )
 
 func TestExtractIPs(t *testing.T) {
 	tests := []struct {
-		name    string
 		input   string
 		wantIPs []string
 	}{
-		{
-			name:    "valid public v4 and v6",
-			input:   "public 8.8.8.8 and 2001:4860:4860::8888",
-			wantIPs: []string{"8.8.8.8", "2001:4860:4860::8888"},
-		},
-		{
-			name:    "rejects private, loopback, and multicast",
-			input:   "10.0.0.1 127.0.0.1 169.254.0.1 224.0.0.1 ::1 fe80::1",
-			wantIPs: nil,
-		},
-		{
-			name:    "ignores timestamps, css, and headers",
-			input:   "time 2026-09-21T22:58:35 content-type:text/html ip 203.0.113.10",
-			wantIPs: []string{"203.0.113.10"},
-		},
+		{"public 8.8.8.8 and 2001:4860:4860::8888", []string{"8.8.8.8", "2001:4860:4860::8888"}},
+		{"10.0.0.1 127.0.0.1 169.254.0.1 224.0.0.1 ::1 fe80::1", nil},
+		{"time 2026-09-21T22:58:35 content-type:text/html ip 203.0.113.10", []string{"203.0.113.10"}},
 	}
-
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := extractIPs(tt.input)
-			if len(got) != len(tt.wantIPs) {
-				t.Fatalf("extractIPs() = %v, want %v", got, tt.wantIPs)
-			}
-			for i, ip := range tt.wantIPs {
-				if got[i] != ip {
-					t.Errorf("extractIPs()[%d] = %s, want %s", i, got[i], ip)
-				}
-			}
-		})
+		if got := extractIPs(tt.input); !slices.Equal(got, tt.wantIPs) {
+			t.Errorf("extractIPs(%q) = %v, want %v", tt.input, got, tt.wantIPs)
+		}
 	}
 }
 
@@ -51,58 +30,39 @@ func TestHTTPServiceExecution(t *testing.T) {
 		switch r.URL.Path {
 		case "/timeout":
 			time.Sleep(100 * time.Millisecond)
-			w.WriteHeader(http.StatusOK)
 		case "/error":
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = w.Write([]byte("server error mentioning 203.0.113.99"))
 		case "/ok":
-			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("203.0.113.5"))
 		}
 	}))
 	defer server.Close()
 
-	// Test 1: Successful probe
-	res := TestHTTPService(context.Background(), ServiceConfig{
-		Name: "ok-test", URL: server.URL + "/ok", Protocol: "HTTP", Timeout: time.Second,
-	}, 1)
-	if !res.Success || len(res.IPs) != 1 || res.IPs[0] != "203.0.113.5" {
-		t.Fatalf("expected success with 203.0.113.5, got %v", res)
+	cases := []struct {
+		path    string
+		timeout time.Duration
+		wantOK  bool
+		wantIP  string
+	}{
+		{"/ok", time.Second, true, "203.0.113.5"},
+		{"/error", time.Second, false, ""},
+		{"/timeout", 20 * time.Millisecond, false, ""},
+		{"/ok", 0, true, "203.0.113.5"},
 	}
-
-	// Test 2: Status error rejected even if body has an IP
-	res = TestHTTPService(context.Background(), ServiceConfig{
-		Name: "err-test", URL: server.URL + "/error", Protocol: "HTTP", Timeout: time.Second,
-	}, 1)
-	if res.Success {
-		t.Fatalf("expected failure on 500 status, got success: %v", res.IPs)
-	}
-
-	// Test 3: Respects timeout
-	res = TestHTTPService(context.Background(), ServiceConfig{
-		Name: "timeout-test", URL: server.URL + "/timeout", Protocol: "HTTP", Timeout: 20 * time.Millisecond,
-	}, 1)
-	if res.Success {
-		t.Fatalf("expected timeout failure, got %v", res)
-	}
-
-	// Test 4: Default timeout (Timeout <= 0) produces bounded request
-	res = TestHTTPService(context.Background(), ServiceConfig{
-		Name: "default-timeout-test", URL: server.URL + "/ok", Protocol: "HTTP",
-	}, 1)
-	if !res.Success || len(res.IPs) != 1 {
-		t.Fatalf("expected success with default timeout, got %v", res)
+	for _, tc := range cases {
+		res := TestHTTPService(context.Background(), ServiceConfig{
+			Name: "test", URL: server.URL + tc.path, Protocol: "HTTP", Timeout: tc.timeout,
+		}, 1)
+		if res.Success != tc.wantOK || (tc.wantIP != "" && !slices.Equal(res.IPs, []string{tc.wantIP})) {
+			t.Fatalf("path %s (timeout %v): got success=%v, ips=%v; want success=%v, ip=%s",
+				tc.path, tc.timeout, res.Success, res.IPs, tc.wantOK, tc.wantIP)
+		}
 	}
 }
 
 func TestGetHTTPClient(t *testing.T) {
-	if getHTTPClient("IPv4") != clientIPv4 {
-		t.Fatal("expected clientIPv4 for IPv4")
-	}
-	if getHTTPClient("IPv6") != clientIPv6 {
-		t.Fatal("expected clientIPv6 for IPv6")
-	}
-	if getHTTPClient("") != clientDual {
-		t.Fatal("expected clientDual for dual-stack default")
+	if getHTTPClient("IPv4") != clientIPv4 || getHTTPClient("IPv6") != clientIPv6 || getHTTPClient("") != clientDual {
+		t.Fatal("unexpected client mapping")
 	}
 }

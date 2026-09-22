@@ -3,6 +3,8 @@ package discovery
 import (
 	"context"
 	"net"
+	"slices"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,7 +18,7 @@ func TestSTUNServiceExecution(t *testing.T) {
 	}
 	defer conn.Close()
 
-	sendOtherAddr := false
+	var sendOtherAddr atomic.Bool
 	go func() {
 		buf := make([]byte, 1500)
 		for {
@@ -31,7 +33,7 @@ func TestSTUNServiceExecution(t *testing.T) {
 			}
 
 			var resp *stun.Message
-			if sendOtherAddr {
+			if sendOtherAddr.Load() {
 				resp = stun.MustBuild(stun.TransactionID, stun.BindingSuccess, &stun.OtherAddress{
 					IP: net.ParseIP("198.51.100.99"), Port: 3478,
 				})
@@ -55,12 +57,12 @@ func TestSTUNServiceExecution(t *testing.T) {
 
 	// 1. Success with XOR-MAPPED-ADDRESS
 	res := TestSTUNService(context.Background(), svc, 1)
-	if !res.Success || len(res.IPs) != 1 || res.IPs[0] != "203.0.113.50" {
+	if !res.Success || !slices.Equal(res.IPs, []string{"203.0.113.50"}) {
 		t.Fatalf("expected success with 203.0.113.50, got: %v (err: %v)", res.IPs, res.Error)
 	}
 
 	// 2. Reject when only OTHER-ADDRESS is present
-	sendOtherAddr = true
+	sendOtherAddr.Store(true)
 	res = TestSTUNService(context.Background(), svc, 1)
 	if res.Success {
 		t.Fatalf("expected failure when only OTHER-ADDRESS is present, got success: %v", res.IPs)
