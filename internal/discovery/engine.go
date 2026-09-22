@@ -262,13 +262,9 @@ func (e *Engine) calcProtocolStatsLocked() map[string]ui.ProtocolStat {
 func (e *Engine) getUpdateSnapshotLocked() ui.ResultUpdate {
 	confidence, consensus := e.CalculateConfidence()
 
-	familyIPs := make(map[string]map[string]int, len(e.familyIPs))
+	familyIPs := make(map[string][]ui.IPEntry, len(e.familyIPs))
 	for fam, counts := range e.familyIPs {
-		copyCounts := make(map[string]int, len(counts))
-		for ip, count := range counts {
-			copyCounts[ip] = count
-		}
-		familyIPs[fam] = copyCounts
+		familyIPs[fam] = ui.RankIPs(counts)
 	}
 
 	return ui.ResultUpdate{
@@ -322,7 +318,11 @@ func (e *Engine) CalculateConfidence() (string, string) {
 		dominance := float64(maxHits) / float64(totalFamHits)
 		if dominance < 0.8 && len(counts) > 1 {
 			isConsistent = false
-			consensusMsg = fmt.Sprintf("Multiple Mappings (%s)", fam)
+			if dominance < 0.6 {
+				consensusMsg = fmt.Sprintf("Multiple Mappings (%s)", fam)
+			} else {
+				consensusMsg = fmt.Sprintf("Weak Consensus (%s)", fam)
+			}
 		}
 	}
 
@@ -360,6 +360,11 @@ func (e *Engine) outputJSON() {
 	confidence, consensus := e.CalculateConfidence()
 	durationMs := float64(time.Since(e.startTime).Milliseconds())
 
+	discoveredIPs := make(map[string][]ui.IPEntry, len(e.familyIPs))
+	for fam, counts := range e.familyIPs {
+		discoveredIPs[strings.ToLower(fam)] = ui.RankIPs(counts)
+	}
+
 	out := JSONOutput{
 		Timestamp:       e.startTime.UTC(),
 		DurationMs:      durationMs,
@@ -368,7 +373,7 @@ func (e *Engine) outputJSON() {
 		CompletedTests:  e.testsCompleted,
 		SuccessfulTests: e.testsSuccessful,
 		ProtocolStats:   e.calcProtocolStatsLocked(),
-		DiscoveredIPs:   e.familyIPs,
+		DiscoveredIPs:   discoveredIPs,
 		DetailedResults: e.results,
 	}
 

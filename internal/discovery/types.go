@@ -44,6 +44,6 @@ type JSONOutput struct {
 	CompletedTests  int                        `json:"completed_tests"`
 	SuccessfulTests int                        `json:"successful_tests"`
 	ProtocolStats   map[string]ui.ProtocolStat `json:"protocol_stats"`
-	DiscoveredIPs   map[string]map[string]int  `json:"discovered_ips"`
+	DiscoveredIPs   map[string][]ui.IPEntry    `json:"discovered_ips"`
 	DetailedResults []TestResult               `json:"detailed_results,omitempty"`
 }

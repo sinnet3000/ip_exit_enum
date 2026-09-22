@@ -31,6 +31,31 @@ type ProtocolStat struct {
 	Attempted int `json:"attempted"`
 }
 
+type IPEntry struct {
+	IP         string  `json:"ip"`
+	Hits       int     `json:"hits"`
+	Percentage float64 `json:"percentage"`
+}
+
+func RankIPs(counts map[string]int) []IPEntry {
+	total := 0
+	for _, c := range counts {
+		total += c
+	}
+	entries := make([]IPEntry, 0, len(counts))
+	for ip, c := range counts {
+		pct := 0.0
+		if total > 0 {
+			pct = (float64(c) / float64(total)) * 100
+		}
+		entries = append(entries, IPEntry{IP: ip, Hits: c, Percentage: pct})
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].Hits > entries[j].Hits
+	})
+	return entries
+}
+
 type ResultUpdate struct {
 	StartTime       time.Time
 	CurrentPhase    string
@@ -38,7 +63,7 @@ type ResultUpdate struct {
 	TotalTests      int
 	SuccessfulTests int
 	ProtocolStats   map[string]ProtocolStat
-	IPFamilies      map[string]map[string]int
+	IPFamilies      map[string][]IPEntry
 	ConfidenceLevel string
 	Consensus       string
 }
@@ -70,43 +95,20 @@ func (d *Display) ProgressBar(completed, total int, width int) string {
 	return fmt.Sprintf("[%s] %d/%d (%.1f%%)", bar, completed, total, pct*100)
 }
 
-func (d *Display) FormatIPList(ipCounts map[string]int) []string {
+func (d *Display) FormatIPList(entries []IPEntry) []string {
 	var lines []string
-
-	type ipHit struct {
-		ip    string
-		count int
-	}
-	var hits []ipHit
-	totalHits := 0
-
-	for ip, count := range ipCounts {
-		hits = append(hits, ipHit{ip, count})
-		totalHits += count
-	}
-
-	sort.Slice(hits, func(i, j int) bool {
-		return hits[i].count > hits[j].count
-	})
-
-	for _, h := range hits {
-		pct := 0.0
-		if totalHits > 0 {
-			pct = (float64(h.count) / float64(totalHits)) * 100
-		}
-
+	for _, h := range entries {
 		color := ColorFail
-		if h.count >= 3 {
+		if h.Hits >= 3 {
 			color = ColorOKGreen
-		} else if h.count >= 2 {
+		} else if h.Hits >= 2 {
 			color = ColorWarning
 		}
 
 		line := fmt.Sprintf("   %s✓ %-39s%s (%d hits, %.1f%%)",
-			color, h.ip, ColorEnd, h.count, pct)
+			color, h.IP, ColorEnd, h.Hits, h.Percentage)
 		lines = append(lines, line)
 	}
-
 	return lines
 }
 
