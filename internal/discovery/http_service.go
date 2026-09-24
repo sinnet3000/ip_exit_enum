@@ -15,10 +15,15 @@ import (
 var (
 	httpDialer = &net.Dialer{KeepAlive: 30 * time.Second}
 
+	// Echo services are untrusted; never follow their redirects.
+	noRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+
 	clientDual = &http.Client{
-		Transport: &http.Transport{DisableKeepAlives: true},
+		CheckRedirect: noRedirect,
+		Transport:     &http.Transport{DisableKeepAlives: true},
 	}
 	clientIPv4 = &http.Client{
+		CheckRedirect: noRedirect,
 		Transport: &http.Transport{
 			DisableKeepAlives: true,
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -27,6 +32,7 @@ var (
 		},
 	}
 	clientIPv6 = &http.Client{
+		CheckRedirect: noRedirect,
 		Transport: &http.Transport{
 			DisableKeepAlives: true,
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -54,9 +60,6 @@ func extractIPs(content string) []string {
 	var valid []string
 	seen := make(map[string]bool)
 	addCandidate := func(candidate string) {
-		if candidate == "" {
-			return
-		}
 		addr, err := netip.ParseAddr(candidate)
 		if err != nil || !addr.IsGlobalUnicast() || addr.IsPrivate() {
 			return

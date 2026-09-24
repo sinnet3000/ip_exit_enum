@@ -307,7 +307,7 @@ func (e *Engine) CalculateConfidence() (string, string) {
 		}
 
 		dominance := float64(maxHits) / float64(totalFamHits)
-		if dominance < 0.8 && len(counts) > 1 {
+		if dominance < 0.8 {
 			isConsistent = false
 			if dominance < 0.6 {
 				consensusMsg = fmt.Sprintf("Multiple Mappings (%s)", fam)

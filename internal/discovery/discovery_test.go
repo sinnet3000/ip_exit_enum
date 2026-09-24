@@ -23,6 +23,24 @@ func TestExtractIPs(t *testing.T) {
 	}
 }
 
+func TestHTTPServiceDoesNotFollowRedirects(t *testing.T) {
+	var hit atomic.Bool
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hit.Store(true)
+		w.Write([]byte("203.0.113.5"))
+	}))
+	defer target.Close()
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusFound)
+	}))
+	defer redirector.Close()
+
+	res := TestHTTPService(context.Background(), ServiceConfig{Name: "redir", URL: redirector.URL, Timeout: 2 * time.Second}, 1)
+	if res.Success || hit.Load() {
+		t.Fatalf("redirect was followed or treated as success: %+v", res)
+	}
+}
+
 func TestHTTPServiceExecution(t *testing.T) {
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

@@ -12,7 +12,7 @@ type ServiceConfig struct {
 	Protocol      string
 	Family        string // "IPv4", "IPv6", or "" (dual)
 	Timeout       time.Duration
-	ExtractMethod string // 'text', 'json', 'headers'
+	ExtractMethod string // "json" extracts ExtractField; anything else scans the raw body
 	ExtractField  string // for JSON
 }
 
