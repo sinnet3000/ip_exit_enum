@@ -67,7 +67,7 @@ sha256_of() {
 
 verify_checksum() {
     local archive="$1" sums="$2" filename="$3"
-    local expected=$(awk -v f="$filename" '{n=$2; sub(/^\*/, "", n)} n==f {print $1; exit}' "$sums")
+    local expected=$(awk -v f="$filename" '{n=$2; sub(/^\*/, "", n)} n==f {print tolower($1); exit}' "$sums")
     [ -n "$expected" ] || error "No checksum listed for ${filename}"
     local actual=$(sha256_of "$archive")
     [ "$expected" = "$actual" ] || error "Checksum mismatch for ${filename}: expected ${expected}, got ${actual}"
@@ -108,7 +108,7 @@ main() {
     local url="https://github.com/${REPO}/releases/download/${ver}/${filename}"
 
     local tmpdir=$(mktemp -d)
-    trap 'rm -rf "$tmpdir"' EXIT
+    trap "rm -rf '$tmpdir'" EXIT
 
     info "Downloading ${filename}..."
     if ! download "$url" "$tmpdir/release.tar.gz"; then
