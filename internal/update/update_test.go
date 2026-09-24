@@ -120,7 +120,7 @@ func TestFetchChecksumFromFile(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		w.Write([]byte(strings.Repeat("f", 64) + "  other.tar.gz\n" + sum + "  wanted.tar.gz\n"))
+		w.Write([]byte(strings.Repeat("f", 64) + "  other.tar.gz\n" + strings.Repeat("e", 64) + "  wanted.tar.gz.sig\n" + sum + "  wanted.tar.gz\n"))
 	}))
 	defer srv.Close()
 

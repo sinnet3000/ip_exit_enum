@@ -55,6 +55,24 @@ download() {
     fi
 }
 
+sha256_of() {
+    if command -v sha256sum &>/dev/null; then
+        sha256sum "$1" | cut -d' ' -f1
+    elif command -v shasum &>/dev/null; then
+        shasum -a 256 "$1" | cut -d' ' -f1
+    else
+        error "Neither sha256sum nor shasum found; cannot verify download"
+    fi
+}
+
+verify_checksum() {
+    local archive="$1" sums="$2" filename="$3"
+    local expected=$(awk -v f="$filename" '{n=$2; sub(/^\*/, "", n)} n==f {print $1; exit}' "$sums")
+    [ -n "$expected" ] || error "No checksum listed for ${filename}"
+    local actual=$(sha256_of "$archive")
+    [ "$expected" = "$actual" ] || error "Checksum mismatch for ${filename}: expected ${expected}, got ${actual}"
+}
+
 get_latest_version() {
     local url="https://api.github.com/repos/${REPO}/releases/latest"
     if command -v curl &>/dev/null; then
@@ -90,12 +108,18 @@ main() {
     local url="https://github.com/${REPO}/releases/download/${ver}/${filename}"
 
     local tmpdir=$(mktemp -d)
-    trap "rm -rf $tmpdir" EXIT
+    trap 'rm -rf "$tmpdir"' EXIT
 
     info "Downloading ${filename}..."
     if ! download "$url" "$tmpdir/release.tar.gz"; then
         error "Download failed. Check https://github.com/${REPO}/releases for available binaries."
     fi
+
+    info "Verifying checksum..."
+    if ! download "https://github.com/${REPO}/releases/download/${ver}/SHA256SUMS" "$tmpdir/SHA256SUMS"; then
+        error "Could not download SHA256SUMS; refusing to install an unverified binary."
+    fi
+    verify_checksum "$tmpdir/release.tar.gz" "$tmpdir/SHA256SUMS" "$filename"
 
     info "Extracting..."
     tar -xzf "$tmpdir/release.tar.gz" -C "$tmpdir"

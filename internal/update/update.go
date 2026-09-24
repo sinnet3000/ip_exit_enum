@@ -146,15 +146,9 @@ func PerformUpdate(info *UpdateInfo) error {
 		return fmt.Errorf("backup current binary: %w", err)
 	}
 
-	if err := copyFile(srcPath, currentExe); err != nil {
+	if err := copyFile(srcPath, currentExe, 0755); err != nil {
 		os.Rename(backupPath, currentExe)
 		return fmt.Errorf("install new binary: %w", err)
-	}
-
-	if runtime.GOOS != "windows" {
-		if err := os.Chmod(currentExe, 0755); err != nil {
-			return fmt.Errorf("chmod: %w", err)
-		}
 	}
 
 	os.Remove(backupPath)
@@ -289,14 +283,14 @@ func sanitizeTarPath(destDir, name string) (string, error) {
 	return target, nil
 }
 
-func copyFile(src, dst string) error {
+func copyFile(src, dst string, perm os.FileMode) error {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
 
-	out, err := os.Create(dst)
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, perm)
 	if err != nil {
 		return err
 	}
@@ -325,12 +319,11 @@ func fetchChecksumFromFile(url, assetName string) (string, error) {
 		return "", err
 	}
 
-	re := regexp.MustCompile(`(?i)[a-f0-9]{64}`)
+	re := regexp.MustCompile(`(?i)^[a-f0-9]{64}$`)
 	for _, line := range strings.Split(string(body), "\n") {
-		if strings.Contains(line, assetName) {
-			if match := re.FindString(line); match != "" {
-				return strings.ToLower(match), nil
-			}
+		fields := strings.Fields(line)
+		if len(fields) == 2 && strings.TrimPrefix(fields[1], "*") == assetName && re.MatchString(fields[0]) {
+			return strings.ToLower(fields[0]), nil
 		}
 	}
 	return "", nil
