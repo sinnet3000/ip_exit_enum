@@ -86,7 +86,7 @@ cd ip_exit_enum
 make install
 ```
 
-Requires **Go** 1.22.5 or newer. Installs to `~/.local/bin/`.
+Requires **Go** 1.26.11 or newer. Installs to `~/.local/bin/`.
 
 ---
 
