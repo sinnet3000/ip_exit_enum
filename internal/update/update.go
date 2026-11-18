@@ -2,6 +2,7 @@ package update
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
@@ -23,6 +24,22 @@ import (
 const (
 	githubAPIURL = "https://api.github.com/repos/sinnet3000/ip_exit_enum/releases/latest"
 	binaryName   = "ip_exit_enum"
+
+	// maxReleaseJSONSize bounds the GitHub release metadata response. The
+	// document is only a few KiB today, so 1 MiB leaves ample room while
+	// preventing an untrusted endpoint from streaming an unbounded body into
+	// memory.
+	maxReleaseJSONSize int64 = 1 << 20
+
+	// maxChecksumFileSize bounds the SHA256SUMS metadata response. Checksum
+	// manifests are short text lists that stay far below 1 MiB.
+	maxChecksumFileSize int64 = 1 << 20
+
+	// maxArchiveSize is the hard cap for the compressed release archive. It
+	// applies to the actual response body and is independent of the size
+	// advertised in release metadata. Current archives are well under this;
+	// 256 MiB leaves room for growth without allowing an unbounded download.
+	maxArchiveSize int64 = 256 << 20
 )
 
 type releaseResponse struct {
@@ -76,9 +93,16 @@ func CheckForUpdate() (*UpdateInfo, error) {
 		return nil, fmt.Errorf("no release asset found for %s/%s", runtime.GOOS, runtime.GOARCH)
 	}
 
+	if err := validateAssetSizes(asset, checksumsAsset); err != nil {
+		return nil, err
+	}
+
 	var checksum string
 	if checksumsAsset != nil {
-		checksum, _ = fetchChecksumFromFile(checksumsAsset.BrowserDownloadURL, assetName)
+		checksum, err = fetchChecksumFromFile(checksumsAsset.BrowserDownloadURL, assetName)
+		if err != nil {
+			return nil, fmt.Errorf("read release checksums: %w", err)
+		}
 	}
 
 	return &UpdateInfo{
@@ -89,6 +113,20 @@ func CheckForUpdate() (*UpdateInfo, error) {
 		Size:           asset.Size,
 		Checksum:       checksum,
 	}, nil
+}
+
+// validateAssetSizes rejects clearly oversized assets using the sizes
+// advertised in untrusted release metadata. This is only an early rejection
+// hint; downloadFile and fetchChecksumFromFile enforce the hard limits against
+// the actual response bodies regardless of what the metadata claims.
+func validateAssetSizes(asset, checksumsAsset *releaseAsset) error {
+	if asset.Size > maxArchiveSize {
+		return fmt.Errorf("release asset %s is too large: advertised size %d bytes exceeds maximum allowed size of %d bytes", asset.Name, asset.Size, maxArchiveSize)
+	}
+	if checksumsAsset != nil && checksumsAsset.Size > maxChecksumFileSize {
+		return fmt.Errorf("checksum asset %s is too large: advertised size %d bytes exceeds maximum allowed size of %d bytes", checksumsAsset.Name, checksumsAsset.Size, maxChecksumFileSize)
+	}
+	return nil
 }
 
 func PerformUpdate(info *UpdateInfo) error {
@@ -157,8 +195,12 @@ func PerformUpdate(info *UpdateInfo) error {
 }
 
 func fetchLatestRelease() (*releaseResponse, error) {
+	return fetchLatestReleaseFrom(githubAPIURL)
+}
+
+func fetchLatestReleaseFrom(url string) (*releaseResponse, error) {
 	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Get(githubAPIURL)
+	resp, err := client.Get(url)
 	if err != nil {
 		return nil, err
 	}
@@ -168,14 +210,27 @@ func fetchLatestRelease() (*releaseResponse, error) {
 		return nil, fmt.Errorf("GitHub API returned %s", resp.Status)
 	}
 
+	if err := checkDeclaredSize(resp.ContentLength, maxReleaseJSONSize, "release metadata"); err != nil {
+		return nil, err
+	}
+
+	body, err := readAllLimited(resp.Body, maxReleaseJSONSize, "release metadata")
+	if err != nil {
+		return nil, err
+	}
+
 	var release releaseResponse
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+	if err := json.NewDecoder(bytes.NewReader(body)).Decode(&release); err != nil {
 		return nil, err
 	}
 	return &release, nil
 }
 
 func downloadFile(url, dest string) (string, error) {
+	return downloadFileWithLimit(url, dest, maxArchiveSize)
+}
+
+func downloadFileWithLimit(url, dest string, limit int64) (string, error) {
 	client := &http.Client{Timeout: 120 * time.Second}
 	resp, err := client.Get(url)
 	if err != nil {
@@ -187,18 +242,76 @@ func downloadFile(url, dest string) (string, error) {
 		return "", fmt.Errorf("download returned %s", resp.Status)
 	}
 
+	// Reject an over-limit declared size before creating the destination.
+	// Content-Length is not trusted: unknown (-1) or understated values still
+	// go through the body limit below.
+	if err := checkDeclaredSize(resp.ContentLength, limit, "archive"); err != nil {
+		return "", err
+	}
+
 	out, err := os.Create(dest)
 	if err != nil {
 		return "", err
 	}
-	defer out.Close()
 
 	hasher := sha256.New()
-	if _, err := io.Copy(out, io.TeeReader(resp.Body, hasher)); err != nil {
+	if _, err := writeAllLimited(io.MultiWriter(out, hasher), resp.Body, limit, "archive"); err != nil {
+		out.Close()
+		os.Remove(dest)
+		return "", err
+	}
+
+	if err := out.Close(); err != nil {
+		os.Remove(dest)
 		return "", err
 	}
 
 	return hex.EncodeToString(hasher.Sum(nil)), nil
+}
+
+// checkDeclaredSize rejects a response whose declared Content-Length already
+// exceeds limit. Unknown lengths (-1) and non-positive values are not trusted;
+// the body limit remains authoritative for those responses.
+func checkDeclaredSize(declared, limit int64, what string) error {
+	if declared > limit {
+		return fmt.Errorf("%s is too large: declared size %d bytes exceeds maximum allowed size of %d bytes", what, declared, limit)
+	}
+	return nil
+}
+
+// readAllLimited reads r in full while rejecting payloads larger than limit.
+// It reads at most limit+1 bytes so a payload exactly at the limit succeeds
+// and a payload one byte over is detected explicitly.
+func readAllLimited(r io.Reader, limit int64, what string) ([]byte, error) {
+	var buf bytes.Buffer
+	if _, err := writeAllLimited(&buf, r, limit, what); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// writeAllLimited copies src to dst while writing at most limit bytes. Once
+// exactly limit bytes have been copied it reads one additional byte to
+// distinguish an exact-limit payload from an oversized one, so dst never
+// receives more than limit bytes.
+func writeAllLimited(dst io.Writer, src io.Reader, limit int64, what string) (int64, error) {
+	n, err := io.Copy(dst, io.LimitReader(src, limit))
+	if err != nil {
+		return n, err
+	}
+
+	if n == limit {
+		var extra [1]byte
+		m, err := io.ReadFull(src, extra[:])
+		if m > 0 {
+			return n, fmt.Errorf("%s exceeds maximum allowed size of %d bytes", what, limit)
+		}
+		if err != nil && err != io.EOF {
+			return n, err
+		}
+	}
+
+	return n, nil
 }
 
 func extractTarGz(archive, destDir string) error {
@@ -314,7 +427,11 @@ func fetchChecksumFromFile(url, assetName string) (string, error) {
 		return "", fmt.Errorf("failed to fetch checksums: %s", resp.Status)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	if err := checkDeclaredSize(resp.ContentLength, maxChecksumFileSize, "checksum file"); err != nil {
+		return "", err
+	}
+
+	body, err := readAllLimited(resp.Body, maxChecksumFileSize, "checksum file")
 	if err != nil {
 		return "", err
 	}
