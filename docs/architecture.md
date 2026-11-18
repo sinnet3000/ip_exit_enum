@@ -20,7 +20,7 @@
 ## Data models and invariants
 - `ServiceConfig`: identifies a service endpoint, protocol, and timeout.
 - `TestResult`: captures service outcome and discovered IPs.
-- IP filtering invariant: only public, non-loopback, non-private, non-link-local IPs are accepted.
+- IP filtering invariant: candidates must be global unicast. Private and carrier-grade NAT addresses are rejected, and IPv4-mapped IPv6 addresses are normalized to IPv4. Documentation ranges remain accepted for compatibility.
 - Confidence scoring uses success rate, sample size, protocol diversity, and consensus.
 
 ## Trust boundaries

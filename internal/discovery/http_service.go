@@ -7,7 +7,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/netip"
 	"regexp"
 	"time"
 )
@@ -60,11 +59,10 @@ func extractIPs(content string) []string {
 	var valid []string
 	seen := make(map[string]bool)
 	addCandidate := func(candidate string) {
-		addr, err := netip.ParseAddr(candidate)
-		if err != nil || !addr.IsGlobalUnicast() || addr.IsPrivate() {
+		cleanIP, ok := normalizeEgressIP(candidate)
+		if !ok {
 			return
 		}
-		cleanIP := addr.String()
 		if !seen[cleanIP] {
 			valid = append(valid, cleanIP)
 			seen[cleanIP] = true

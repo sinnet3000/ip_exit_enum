@@ -89,8 +89,12 @@ func TestSTUNService(ctx context.Context, service ServiceConfig, attempt int) Te
 	}
 
 	addr, ok := netip.AddrFromSlice(xorAddr.IP)
-	if !ok || !addr.IsGlobalUnicast() {
-		return fail(fmt.Errorf("stun returned non-public IP: %s", xorAddr.IP.String()))
+	if !ok {
+		return fail(fmt.Errorf("stun returned invalid IP: %s", xorAddr.IP.String()))
+	}
+	publicAddr, ok := normalizeEgressAddr(addr)
+	if !ok {
+		return fail(fmt.Errorf("stun returned non-public IP: %s", addr.String()))
 	}
 
 	return TestResult{
@@ -99,7 +103,7 @@ func TestSTUNService(ctx context.Context, service ServiceConfig, attempt int) Te
 		Timestamp: start,
 		Attempt:   attempt,
 		Success:   true,
-		IPs:       []string{xorAddr.IP.String()},
+		IPs:       []string{publicAddr.String()},
 		LatencyMs: float64(time.Since(start).Microseconds()) / 1000.0,
 	}
 }
